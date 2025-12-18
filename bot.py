@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord.ui import View, Button
 import sqlite3
 import random
+import os
 
 # -----------------------------
 # INTENTS
@@ -77,15 +78,17 @@ def parse_money(value: str) -> int:
             return int(num * 1_000)
         else:
             # Try to parse as plain integer
-            try:
-                return int(value)
-            except ValueError:
-                return -1
+            return int(value)
     except (ValueError, AttributeError):
         return -1
 
 def is_owner(user):
     return user.id in OWNER_IDS
+
+def calculate_total_pages(total_items, items_per_page):
+    """Calculate total number of pages for pagination."""
+    import math
+    return max(1, math.ceil(total_items / items_per_page))
 
 def get_user(user_id):
     """Get user from database, creating entry if needed. Returns tuple of user data."""
@@ -192,8 +195,11 @@ class TicketCloseView(View):
                 chunk = "\n".join(messages[i:i+10])
                 # Discord embed description limit is 4096 characters
                 if len(chunk) > 4096:
-                    # Further split if needed
-                    await transcript_channel.send(chunk[:4096])
+                    # Further split if needed - send in embed format for consistency
+                    await transcript_channel.send(embed=discord.Embed(
+                        description=chunk[:4096],
+                        color=discord.Color.blue()
+                    ))
                 else:
                     await transcript_channel.send(embed=discord.Embed(
                         description=chunk,
@@ -211,9 +217,9 @@ class TicketCloseView(View):
                 await transcript_channel.send(f"⚠️ Failed to delete channel {ticket_name} (ID: {ticket_id}) - HTTP error: {e}")
         except Exception as e:
             # Catch any other errors during transcript creation
-            try:
+            if not interaction.response.is_done():
                 await interaction.response.send_message(f"❌ Error closing ticket: {str(e)}", ephemeral=True)
-            except discord.InteractionResponded:
+            else:
                 await interaction.followup.send(f"❌ Error closing ticket: {str(e)}", ephemeral=True)
 
 class TicketPanelView(View):
@@ -515,7 +521,7 @@ async def amountall(ctx, page: int = 1):
             await ctx.send("❌ No users found in database.")
             return
         
-        total_pages = max(1, (len(users) + USERS_PER_PAGE - 1) // USERS_PER_PAGE)
+        total_pages = calculate_total_pages(len(users), USERS_PER_PAGE)
         page = max(1, min(page, total_pages))
         start = (page - 1) * USERS_PER_PAGE
         end = start + USERS_PER_PAGE
@@ -581,5 +587,9 @@ async def on_command_error(ctx, error):
 # -----------------------------
 # RUN BOT
 # -----------------------------
-bot.run("YOUR_BOT_TOKEN_HERE")
+# Get bot token from environment variable or use placeholder
+bot_token = os.getenv("DISCORD_BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+if bot_token == "YOUR_BOT_TOKEN_HERE":
+    print("⚠️ WARNING: Using placeholder bot token. Set DISCORD_BOT_TOKEN environment variable.")
+bot.run(bot_token)
 
