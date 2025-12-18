@@ -56,13 +56,18 @@ conn.commit()
 # -----------------------------
 def parse_money(value: str) -> int:
     value = value.lower().replace(",", "")
-    if value.endswith("m"):
-        return int(float(value[:-1]) * 1_000_000)
-    elif value.endswith("b"):
-        return int(float(value[:-1]) * 1_000_000_000)
-    elif value.endswith("k"):
-        return int(float(value[:-1]) * 1_000)
-    else:
+    try:
+        if value.endswith("m"):
+            return int(float(value[:-1]) * 1_000_000)
+        elif value.endswith("b"):
+            return int(float(value[:-1]) * 1_000_000_000)
+        elif value.endswith("k"):
+            return int(float(value[:-1]) * 1_000)
+        else:
+            # Handle plain numeric values
+            return int(value)
+    except (ValueError, OverflowError):
+        # Return -1 for invalid input
         return -1
 
 def is_owner(user):
@@ -317,7 +322,7 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
 
     value = parse_money(amount)
     if value <= 0:
-        await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+        await ctx.send("❌ Invalid amount format! Use numbers, k, m, or b (e.g., 1000, 10k, 5m).")
         return
 
     user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
