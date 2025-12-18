@@ -620,21 +620,9 @@ class SlotsView(View):
         self.ctx = ctx
         self.spun = False
     
-    @discord.ui.button(label="🎰 Spin", style=discord.ButtonStyle.green, custom_id="spin_slots")
-    async def spin_button(self, interaction: discord.Interaction, button: Button):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("❌ This is not your slot machine!", ephemeral=True)
-            return
-        
-        if self.spun:
-            await interaction.response.send_message("❌ You already spun! Use !slots again to play another round.", ephemeral=True)
-            return
-        
+    async def perform_spin(self, interaction: discord.Interaction):
+        """Perform the slot machine spin logic."""
         try:
-            # Disable the button after spinning
-            button.disabled = True
-            self.spun = True
-            
             # Slot symbols with weights for balanced gameplay
             symbols = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐", "7️⃣"]
             
@@ -673,6 +661,11 @@ class SlotsView(View):
             
             # Calculate winnings
             user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            
+            # Check if user has enough balance
+            if self.bet_amount > balance:
+                await interaction.response.send_message(f"❌ Insufficient balance! You have {balance:,}$ but need {self.bet_amount:,}$", ephemeral=True)
+                return None
             
             if win_multiplier > 0:
                 # Winner!
@@ -715,12 +708,48 @@ class SlotsView(View):
             embed.add_field(name="Balance", value=f"{balance:,}$", inline=True)
             embed.add_field(name="Bet Amount", value=f"{self.bet_amount:,}$", inline=True)
             embed.add_field(name="Remaining Gamble", value=f"{remaining:,}$", inline=True)
-            embed.set_footer(text=f"Use !slots {self.bet_amount} to play again!")
+            embed.set_footer(text=f"Click 'Spin Again' to play another round with the same bet!")
             
-            await interaction.response.edit_message(embed=embed, view=self)
+            return embed
             
         except Exception as e:
             await interaction.response.send_message(f"❌ Error during spin: {str(e)}", ephemeral=True)
+            return None
+    
+    @discord.ui.button(label="🎰 Spin", style=discord.ButtonStyle.green, custom_id="spin_slots")
+    async def spin_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your slot machine!", ephemeral=True)
+            return
+        
+        if self.spun:
+            await interaction.response.send_message("❌ You already spun! Click 'Spin Again' to play another round.", ephemeral=True)
+            return
+        
+        # Disable the spin button and enable spin again button
+        button.disabled = True
+        self.spun = True
+        
+        # Perform the spin
+        embed = await self.perform_spin(interaction)
+        if embed:
+            # Enable the Spin Again button
+            for item in self.children:
+                if isinstance(item, Button) and item.custom_id == "spin_again_slots":
+                    item.disabled = False
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="🔄 Spin Again", style=discord.ButtonStyle.blurple, custom_id="spin_again_slots", disabled=True)
+    async def spin_again_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your slot machine!", ephemeral=True)
+            return
+        
+        # Perform another spin with the same bet
+        embed = await self.perform_spin(interaction)
+        if embed:
+            await interaction.response.edit_message(embed=embed, view=self)
     
     async def on_timeout(self):
         """Called when the view times out."""
