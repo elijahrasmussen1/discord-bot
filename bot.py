@@ -472,7 +472,8 @@ async def assist(ctx):
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw [amount]** - Request a withdrawal (requires owner approval)\n"
-        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip"
+        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
+        "**!slots [amount]** - Play the slot machine (3x3 grid)"
     ))
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
@@ -607,6 +608,177 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
         await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ Error during coinflip: {str(e)}")
+
+# -----------------------------
+# 🎰 SLOTS GAMBLING GAME
+# -----------------------------
+class SlotsView(View):
+    def __init__(self, user_id, bet_amount, ctx):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.bet_amount = bet_amount
+        self.ctx = ctx
+        self.spun = False
+    
+    @discord.ui.button(label="🎰 Spin", style=discord.ButtonStyle.green, custom_id="spin_slots")
+    async def spin_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your slot machine!", ephemeral=True)
+            return
+        
+        if self.spun:
+            await interaction.response.send_message("❌ You already spun! Use !slots again to play another round.", ephemeral=True)
+            return
+        
+        try:
+            # Disable the button after spinning
+            button.disabled = True
+            self.spun = True
+            
+            # Slot symbols with weights for balanced gameplay
+            symbols = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐", "7️⃣"]
+            
+            # Generate 3x3 grid
+            grid = [[random.choice(symbols) for _ in range(3)] for _ in range(3)]
+            
+            # Check for winning patterns and calculate multiplier
+            win_multiplier = 0
+            win_patterns = []
+            
+            # Check horizontal lines
+            for i, row in enumerate(grid):
+                if row[0] == row[1] == row[2]:
+                    multiplier = get_symbol_multiplier(row[0])
+                    win_multiplier = max(win_multiplier, multiplier)
+                    win_patterns.append(f"Row {i+1}: {row[0]}{row[1]}{row[2]}")
+            
+            # Check vertical lines
+            for col in range(3):
+                if grid[0][col] == grid[1][col] == grid[2][col]:
+                    multiplier = get_symbol_multiplier(grid[0][col])
+                    win_multiplier = max(win_multiplier, multiplier)
+                    win_patterns.append(f"Column {col+1}: {grid[0][col]}{grid[1][col]}{grid[2][col]}")
+            
+            # Check diagonal (top-left to bottom-right)
+            if grid[0][0] == grid[1][1] == grid[2][2]:
+                multiplier = get_symbol_multiplier(grid[0][0])
+                win_multiplier = max(win_multiplier, multiplier)
+                win_patterns.append(f"Diagonal \\: {grid[0][0]}{grid[1][1]}{grid[2][2]}")
+            
+            # Check diagonal (top-right to bottom-left)
+            if grid[0][2] == grid[1][1] == grid[2][0]:
+                multiplier = get_symbol_multiplier(grid[0][2])
+                win_multiplier = max(win_multiplier, multiplier)
+                win_patterns.append(f"Diagonal /: {grid[0][2]}{grid[1][1]}{grid[2][0]}")
+            
+            # Calculate winnings
+            user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            
+            if win_multiplier > 0:
+                # Winner!
+                winnings = int(self.bet_amount * win_multiplier)
+                balance += winnings
+                result_emoji = "🎉"
+                result_text = f"**WINNER!** x{win_multiplier:.1f} multiplier\nYou won {winnings:,}$!"
+                color = discord.Color.gold()
+            else:
+                # Lost
+                balance -= self.bet_amount
+                result_emoji = "💀"
+                result_text = f"No matches. You lost {self.bet_amount:,}$"
+                color = discord.Color.red()
+            
+            # Update gambling stats
+            gambled += self.bet_amount
+            total_gambled += self.bet_amount
+            
+            c.execute(
+                "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                (balance, gambled, total_gambled, self.user_id)
+            )
+            conn.commit()
+            
+            remaining = max(required_gamble - gambled, 0)
+            
+            # Create result embed
+            grid_display = "\n".join([" ".join(row) for row in grid])
+            
+            embed = discord.Embed(
+                title=f"{result_emoji} Slots Result {result_emoji}",
+                description=f"```\n{grid_display}\n```\n{result_text}",
+                color=color
+            )
+            
+            if win_patterns:
+                embed.add_field(name="💰 Winning Patterns", value="\n".join(win_patterns), inline=False)
+            
+            embed.add_field(name="Balance", value=f"{balance:,}$", inline=True)
+            embed.add_field(name="Bet Amount", value=f"{self.bet_amount:,}$", inline=True)
+            embed.add_field(name="Remaining Gamble", value=f"{remaining:,}$", inline=True)
+            embed.set_footer(text=f"Use !slots {self.bet_amount} to play again!")
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error during spin: {str(e)}", ephemeral=True)
+    
+    async def on_timeout(self):
+        """Called when the view times out."""
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+
+def get_symbol_multiplier(symbol):
+    """Return the multiplier for a given symbol."""
+    multipliers = {
+        "7️⃣": 5.0,    # Jackpot!
+        "💎": 3.0,    # Diamond
+        "⭐": 2.5,    # Star
+        "🍇": 2.0,    # Grape
+        "🍊": 1.8,    # Orange
+        "🍋": 1.5,    # Lemon
+        "🍒": 1.2,    # Cherry
+    }
+    return multipliers.get(symbol, 0)
+
+@bot.command(name="slots")
+async def slots(ctx, amount: str = None):
+    """Play the slots machine! Match 3 symbols in a row, column, or diagonal to win."""
+    try:
+        if amount is None:
+            await ctx.send("❌ Usage: `!slots <amount>`\nExample: `!slots 10m`")
+            return
+        
+        value = parse_money(amount)
+        if value <= 0:
+            await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+            return
+        
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        if value > balance:
+            await ctx.send("❌ You cannot gamble more than your balance.")
+            return
+        
+        # Create initial embed
+        embed = discord.Embed(
+            title="🎰 Slot Machine 🎰",
+            description=f"**Bet Amount:** {value:,}$\n\n**Symbols:**\n"
+                       f"7️⃣ = x5.0 (Jackpot!)\n💎 = x3.0\n⭐ = x2.5\n🍇 = x2.0\n"
+                       f"🍊 = x1.8\n🍋 = x1.5\n🍒 = x1.2\n\n"
+                       f"**How to Win:**\nMatch 3 symbols in a row, column, or diagonal!\n\n"
+                       f"Click the button below to spin!",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="Current Balance", value=f"{balance:,}$", inline=True)
+        embed.add_field(name="Remaining Gamble", value=f"{max(required_gamble - gambled, 0):,}$", inline=True)
+        embed.set_footer(text="Good luck! 🍀")
+        
+        view = SlotsView(ctx.author.id, value, ctx)
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting slots: {str(e)}")
 
 @bot.command(name="deposit")
 async def deposit(ctx, user: discord.Member = None, amount: str = None):
