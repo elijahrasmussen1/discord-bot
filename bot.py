@@ -51,6 +51,24 @@ CREATE TABLE IF NOT EXISTS tickets (
 """)
 conn.commit()
 
+# Database migration: Add missing columns if they don't exist
+try:
+    # Check if total_gambled and total_withdrawn columns exist
+    c.execute("PRAGMA table_info(users)")
+    columns = [column[1] for column in c.fetchall()]
+    
+    if 'total_gambled' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN total_gambled INTEGER DEFAULT 0")
+        print("✅ Added total_gambled column to users table")
+    
+    if 'total_withdrawn' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN total_withdrawn INTEGER DEFAULT 0")
+        print("✅ Added total_withdrawn column to users table")
+    
+    conn.commit()
+except Exception as e:
+    print(f"⚠️ Database migration error (non-fatal): {e}")
+
 # -----------------------------
 # HELPERS
 # -----------------------------
