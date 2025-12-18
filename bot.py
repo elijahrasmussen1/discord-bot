@@ -461,13 +461,14 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
             balance -= value
             result_msg = f"💀 You lost the coinflip! Your balance decreased by {value:,}$."
 
+        # Increase gambled amount - this reduces the remaining requirement
         gambled += value
         total_gambled += value
-        required_gamble = int(balance * GAMBLE_PERCENT)
+        # Do NOT recalculate required_gamble - it stays the same until withdrawal
 
         c.execute(
-            "UPDATE users SET balance=?, gambled=?, total_gambled=?, required_gamble=? WHERE user_id=?",
-            (balance, gambled, total_gambled, required_gamble, ctx.author.id)
+            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+            (balance, gambled, total_gambled, ctx.author.id)
         )
         conn.commit()
 
