@@ -177,6 +177,97 @@ def withdraw_balance(user_id, amount):
     conn.commit()
 
 # -----------------------------
+# WITHDRAWAL CONFIRMATION VIEW
+# -----------------------------
+class WithdrawalConfirmView(View):
+    def __init__(self, user, amount, channel):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.user = user
+        self.amount = amount
+        self.channel = channel
+        self.confirmed = False
+    
+    @discord.ui.button(label="✅ Confirm Withdrawal", style=discord.ButtonStyle.green, custom_id="confirm_withdrawal")
+    async def confirm_withdrawal(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in OWNER_IDS:
+            await interaction.response.send_message("❌ Only owners can confirm withdrawals.", ephemeral=True)
+            return
+        
+        try:
+            # Process the withdrawal
+            withdraw_balance(self.user.id, self.amount)
+            
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+            # Update the original message
+            embed = discord.Embed(
+                title="✅ Withdrawal Approved",
+                description=f"{self.user.mention} withdrew {self.amount:,}$ SAB currency.",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Approved By", value=interaction.user.mention)
+            await interaction.response.edit_message(embed=embed, view=self)
+            
+            # Notify user
+            await self.channel.send(f"✅ {self.user.mention} Your withdrawal of {self.amount:,}$ has been approved!")
+            
+            # Log the withdrawal
+            log_channel = interaction.client.get_channel(WITHDRAWAL_LOG_CHANNEL)
+            if log_channel:
+                await log_channel.send(f"💸 {self.user} withdrew {self.amount:,}$ SAB currency. Approved by {interaction.user}.")
+            
+            self.confirmed = True
+            self.stop()
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error processing withdrawal: {str(e)}", ephemeral=True)
+    
+    @discord.ui.button(label="❌ Decline Withdrawal", style=discord.ButtonStyle.red, custom_id="decline_withdrawal")
+    async def decline_withdrawal(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id not in OWNER_IDS:
+            await interaction.response.send_message("❌ Only owners can decline withdrawals.", ephemeral=True)
+            return
+        
+        try:
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+            # Update the original message
+            embed = discord.Embed(
+                title="❌ Withdrawal Declined",
+                description=f"Withdrawal request from {self.user.mention} has been declined.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Declined By", value=interaction.user.mention)
+            await interaction.response.edit_message(embed=embed, view=self)
+            
+            # Notify user
+            await self.channel.send(f"❌ {self.user.mention} Your withdrawal request has been declined.")
+            
+            self.stop()
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error declining withdrawal: {str(e)}", ephemeral=True)
+    
+    async def on_timeout(self):
+        """Called when the view times out."""
+        try:
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+            embed = discord.Embed(
+                title="⏱️ Withdrawal Request Expired",
+                description=f"Withdrawal request from {self.user.mention} has timed out.",
+                color=discord.Color.orange()
+            )
+            # Try to edit the message if possible
+            # Note: This may fail if the message was deleted
+        except:
+            pass
+
+# -----------------------------
 # TICKET VIEWS
 # -----------------------------
 class TicketCloseView(View):
@@ -380,7 +471,7 @@ async def assist(ctx):
     embed = discord.Embed(title="📘 SAB Bot Assistance", color=discord.Color.blurple())
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
-        "**!withdraw** - Open a withdrawal ticket (if 30% gambled)\n"
+        "**!withdraw [amount]** - Request a withdrawal (requires owner approval)\n"
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip"
     ))
     if is_owner(ctx.author):
@@ -405,24 +496,57 @@ async def amount(ctx):
         await ctx.send(f"❌ Error fetching your balance: {str(e)}")
 
 @bot.command(name="withdraw")
-async def withdraw(ctx):
-    """Withdraw user balance."""
+async def withdraw(ctx, amount: str = None):
+    """Request a withdrawal. Owners must approve the request."""
     try:
         user_id, bal, req, gambled, _, _ = get_user(ctx.author.id)
         remaining_gamble = max(req - gambled, 0)
+        
+        # Check if user has a balance
         if bal <= 0:
             await ctx.send("❌ You must make a deposit in order to withdraw.")
             return
+        
+        # Check if gambling requirement is met
         if remaining_gamble > 0:
             await ctx.send(f"❌ You must gamble {remaining_gamble:,}$ before withdrawing.")
             return
-        withdraw_balance(ctx.author.id, bal)
-        await ctx.send(f"✅ You withdrew {bal:,}$ SAB currency. Your new balance is 0$ and new 30% gambling requirement will apply next deposit.")
-        log_channel = bot.get_channel(WITHDRAWAL_LOG_CHANNEL)
-        if log_channel:
-            await log_channel.send(f"💸 {ctx.author} withdrew {bal:,}$ SAB currency.")
+        
+        # Determine withdrawal amount
+        if amount is None:
+            # Withdraw full balance
+            withdraw_amount = bal
+        else:
+            # Parse the specified amount
+            withdraw_amount = parse_money(amount)
+            if withdraw_amount <= 0:
+                await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+                return
+            
+            # Check if amount is valid
+            if withdraw_amount > bal:
+                await ctx.send(f"❌ You cannot withdraw more than your balance ({bal:,}$).")
+                return
+        
+        # Create withdrawal request embed
+        embed = discord.Embed(
+            title="💸 Withdrawal Request",
+            description=f"{ctx.author.mention} has requested a withdrawal.",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="Amount", value=f"{withdraw_amount:,}$", inline=True)
+        embed.add_field(name="Current Balance", value=f"{bal:,}$", inline=True)
+        embed.add_field(name="Remaining After", value=f"{bal - withdraw_amount:,}$", inline=True)
+        embed.set_footer(text="Owners: Click a button to approve or decline this withdrawal.")
+        
+        # Create the view with confirm/decline buttons
+        view = WithdrawalConfirmView(ctx.author, withdraw_amount, ctx.channel)
+        
+        # Send the embed with buttons
+        await ctx.send(embed=embed, view=view)
+        
     except Exception as e:
-        await ctx.send(f"❌ Error processing withdrawal: {str(e)}")
+        await ctx.send(f"❌ Error processing withdrawal request: {str(e)}")
 
 # -----------------------------
 # ✅ FIXED COINFLIP COMMAND
