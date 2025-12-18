@@ -369,6 +369,9 @@ async def deposit(ctx, user: discord.Member, amount: str):
         await ctx.send("❌ Only owners can deposit.")
         return
     value = parse_money(amount)
+    if value < 0:
+        await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k) or a plain number.")
+        return
     if value < MIN_DEPOSIT:
         await ctx.send(f"❌ Minimum deposit is {MIN_DEPOSIT:,}$")
         return
