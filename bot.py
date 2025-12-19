@@ -471,7 +471,7 @@ async def assist(ctx):
     embed = discord.Embed(title="📘 SAB Bot Assistance", color=discord.Color.blurple())
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
-        "**!withdraw [amount]** - Request a withdrawal (requires owner approval)\n"
+        "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)"
     ))
@@ -497,8 +497,8 @@ async def amount(ctx):
         await ctx.send(f"❌ Error fetching your balance: {str(e)}")
 
 @bot.command(name="withdraw")
-async def withdraw(ctx, amount: str = None):
-    """Request a withdrawal. Owners must approve the request."""
+async def withdraw(ctx):
+    """Request a full withdrawal. Owners must approve the request."""
     try:
         user_id, bal, req, gambled, _, _ = get_user(ctx.author.id)
         remaining_gamble = max(req - gambled, 0)
@@ -513,31 +513,18 @@ async def withdraw(ctx, amount: str = None):
             await ctx.send(f"❌ You must gamble {remaining_gamble:,}$ before withdrawing.")
             return
         
-        # Determine withdrawal amount
-        if amount is None:
-            # Withdraw full balance
-            withdraw_amount = bal
-        else:
-            # Parse the specified amount
-            withdraw_amount = parse_money(amount)
-            if withdraw_amount <= 0:
-                await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
-                return
-            
-            # Check if amount is valid
-            if withdraw_amount > bal:
-                await ctx.send(f"❌ You cannot withdraw more than your balance ({bal:,}$).")
-                return
+        # Withdraw full balance only
+        withdraw_amount = bal
         
         # Create withdrawal request embed
         embed = discord.Embed(
             title="💸 Withdrawal Request",
-            description=f"{ctx.author.mention} has requested a withdrawal.",
+            description=f"{ctx.author.mention} has requested a full withdrawal.",
             color=discord.Color.gold()
         )
-        embed.add_field(name="Amount", value=f"{withdraw_amount:,}$", inline=True)
+        embed.add_field(name="Withdrawal Amount", value=f"{withdraw_amount:,}$", inline=True)
         embed.add_field(name="Current Balance", value=f"{bal:,}$", inline=True)
-        embed.add_field(name="Remaining After", value=f"{bal - withdraw_amount:,}$", inline=True)
+        embed.add_field(name="Remaining After", value="0$", inline=True)
         embed.set_footer(text="Owners: Click a button to approve or decline this withdrawal.")
         
         # Create the view with confirm/decline buttons
