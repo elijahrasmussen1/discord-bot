@@ -4,6 +4,7 @@ from discord.ui import View, Button
 import sqlite3
 import random
 import os
+from datetime import datetime, timedelta
 
 # -----------------------------
 # INTENTS
@@ -22,11 +23,17 @@ OWNER_IDS = [1182265710248996874, 1249352131870195744]
 TICKET_CATEGORY_ID = 1442410056019742750
 TRANSCRIPT_CHANNEL_ID = 1442288590611681401
 WITHDRAWAL_LOG_CHANNEL = 1450656547402285167
+AUDIT_LOG_CHANNEL = 1451387246061293662  # Channel for fraud detection and activity logs
 PING_ROLES = [1442285602166018069, 1442993726057087089]
 MIN_DEPOSIT = 10_000_000
 GAMBLE_PERCENT = 0.30
 USERS_PER_PAGE = 5
 GUILD_ID = 1442270020959867162
+
+# Anti-fraud thresholds
+SUSPICIOUS_WITHDRAWAL_THRESHOLD = 100_000_000  # 100M+ withdrawals are flagged
+RAPID_BET_THRESHOLD = 5  # More than 5 bets in 60 seconds is suspicious
+HIGH_BET_THRESHOLD = 50_000_000  # 50M+ bets are logged
 
 # -----------------------------
 # DATABASE
@@ -49,6 +56,33 @@ CREATE TABLE IF NOT EXISTS tickets (
     ticket_number INTEGER
 )
 """)
+
+# Transaction audit log table
+c.execute("""
+CREATE TABLE IF NOT EXISTS transaction_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    transaction_type TEXT NOT NULL,
+    amount INTEGER NOT NULL,
+    balance_before INTEGER,
+    balance_after INTEGER,
+    timestamp TEXT NOT NULL,
+    details TEXT
+)
+""")
+
+# Bet activity tracking for rapid betting detection
+c.execute("""
+CREATE TABLE IF NOT EXISTS bet_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    bet_amount INTEGER NOT NULL,
+    game_type TEXT NOT NULL,
+    result TEXT,
+    timestamp TEXT NOT NULL
+)
+""")
+
 conn.commit()
 
 # Database migration: Add missing columns if they don't exist
@@ -177,6 +211,88 @@ def withdraw_balance(user_id, amount):
     conn.commit()
 
 # -----------------------------
+# ANTI-FRAUD & AUDIT LOGGING
+# -----------------------------
+async def log_transaction(user_id, transaction_type, amount, balance_before, balance_after, details=""):
+    """Log all transactions to database for audit trail."""
+    try:
+        timestamp = datetime.now().isoformat()
+        c.execute(
+            "INSERT INTO transaction_logs (user_id, transaction_type, amount, balance_before, balance_after, timestamp, details) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, transaction_type, amount, balance_before, balance_after, timestamp, details)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Transaction logging error: {e}")
+
+async def log_bet_activity(user_id, bet_amount, game_type, result):
+    """Track betting activity for fraud detection."""
+    try:
+        timestamp = datetime.now().isoformat()
+        c.execute(
+            "INSERT INTO bet_activity (user_id, bet_amount, game_type, result, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (user_id, bet_amount, game_type, result, timestamp)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"⚠️ Bet activity logging error: {e}")
+
+async def check_rapid_betting(user_id):
+    """Check if user is betting too rapidly (potential bot/exploit)."""
+    try:
+        # Check bets in last 60 seconds
+        one_minute_ago = (datetime.now() - timedelta(seconds=60)).isoformat()
+        c.execute(
+            "SELECT COUNT(*) FROM bet_activity WHERE user_id=? AND timestamp > ?",
+            (user_id, one_minute_ago)
+        )
+        bet_count = c.fetchone()[0]
+        return bet_count >= RAPID_BET_THRESHOLD
+    except Exception as e:
+        print(f"⚠️ Rapid betting check error: {e}")
+        return False
+
+async def send_fraud_alert(bot, user, alert_type, details):
+    """Send fraud alert to audit log channel."""
+    try:
+        audit_channel = bot.get_channel(AUDIT_LOG_CHANNEL)
+        if not audit_channel:
+            print(f"⚠️ Audit log channel {AUDIT_LOG_CHANNEL} not found")
+            return
+        
+        embed = discord.Embed(
+            title=f"🚨 Suspicious Activity Detected",
+            description=f"**User:** {user.mention} ({user.id})\n**Alert Type:** {alert_type}",
+            color=discord.Color.red(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Details", value=details, inline=False)
+        embed.set_footer(text="Anti-Fraud System")
+        
+        await audit_channel.send(embed=embed)
+    except Exception as e:
+        print(f"⚠️ Fraud alert error: {e}")
+
+async def log_user_activity(bot, user, activity_type, details):
+    """Log important user activities to audit channel."""
+    try:
+        audit_channel = bot.get_channel(AUDIT_LOG_CHANNEL)
+        if not audit_channel:
+            return
+        
+        embed = discord.Embed(
+            title=f"📋 User Activity Log",
+            description=f"**User:** {user.mention} ({user.id})\n**Activity:** {activity_type}",
+            color=discord.Color.blue(),
+            timestamp=datetime.now()
+        )
+        embed.add_field(name="Details", value=details, inline=False)
+        
+        await audit_channel.send(embed=embed)
+    except Exception as e:
+        print(f"⚠️ Activity logging error: {e}")
+
+# -----------------------------
 # WITHDRAWAL CONFIRMATION VIEW
 # -----------------------------
 class WithdrawalConfirmView(View):
@@ -194,8 +310,38 @@ class WithdrawalConfirmView(View):
             return
         
         try:
+            # Get balance before withdrawal for logging
+            user_id, bal_before, req, gambled, total_gambled, total_withdrawn = get_user(self.user.id)
+            
+            # Check for suspicious activity
+            if self.amount >= SUSPICIOUS_WITHDRAWAL_THRESHOLD:
+                await send_fraud_alert(
+                    interaction.client,
+                    self.user,
+                    "High Value Withdrawal",
+                    f"Amount: {self.amount:,}$\nApproved by: {interaction.user.mention}"
+                )
+            
             # Process the withdrawal
             withdraw_balance(self.user.id, self.amount)
+            
+            # Log transaction to database
+            await log_transaction(
+                self.user.id,
+                "WITHDRAWAL",
+                self.amount,
+                bal_before,
+                bal_before - self.amount,
+                f"Approved by {interaction.user.name} ({interaction.user.id})"
+            )
+            
+            # Log to audit channel
+            await log_user_activity(
+                interaction.client,
+                self.user,
+                "Withdrawal Approved",
+                f"Amount: {self.amount:,}$\nApproved by: {interaction.user.mention}\nPrevious Balance: {bal_before:,}$\nNew Balance: {bal_before - self.amount:,}$"
+            )
             
             # Disable all buttons
             for item in self.children:
@@ -562,6 +708,25 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
             return
+        
+        # Check for rapid betting (fraud detection)
+        is_rapid = await check_rapid_betting(ctx.author.id)
+        if is_rapid:
+            await send_fraud_alert(
+                bot,
+                ctx.author,
+                "Rapid Betting Detected",
+                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Coinflip"
+            )
+        
+        # Check for high bet (fraud detection)
+        if value >= HIGH_BET_THRESHOLD:
+            await log_user_activity(
+                bot,
+                ctx.author,
+                "High Value Bet",
+                f"Amount: {value:,}$\nGame: Coinflip\nChoice: {choice}\nBalance: {balance:,}$"
+            )
 
         outcome = random.choice(["heads", "tails"])
         won = choice == outcome
@@ -583,6 +748,9 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
             (balance, gambled, total_gambled, ctx.author.id)
         )
         conn.commit()
+        
+        # Log bet activity
+        await log_bet_activity(ctx.author.id, value, "coinflip", "win" if won else "loss")
 
         remaining = max(required_gamble - gambled, 0)
 
@@ -812,9 +980,33 @@ async def deposit(ctx, user: discord.Member = None, amount: str = None):
         if value < MIN_DEPOSIT:
             await ctx.send(f"❌ Minimum deposit is {MIN_DEPOSIT:,}$")
             return
+        
+        # Get balance before deposit
+        user_id, bal_before, req, gambled, _, _ = get_user(user.id)
+        
+        # Update balance
         update_balance(user.id, value)
         user_id, bal, req, gambled, _, _ = get_user(user.id)
         remaining = max(req - gambled, 0)
+        
+        # Log transaction
+        await log_transaction(
+            user.id,
+            "DEPOSIT",
+            value,
+            bal_before,
+            bal,
+            f"Deposited by owner {ctx.author.name} ({ctx.author.id})"
+        )
+        
+        # Log to audit channel
+        await log_user_activity(
+            bot,
+            user,
+            "Deposit Received",
+            f"Amount: {value:,}$\nDeposited by: {ctx.author.mention}\nPrevious Balance: {bal_before:,}$\nNew Balance: {bal:,}$\nRequired Gamble: {req:,}$"
+        )
+        
         await ctx.send(f"✅ Added {value:,}$ to {user.mention}\nBalance: {bal:,}$ | Required Gamble: {req:,}$ | Remaining: {remaining:,}$")
     except Exception as e:
         await ctx.send(f"❌ Error depositing funds: {str(e)}")
