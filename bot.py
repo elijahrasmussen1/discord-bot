@@ -36,6 +36,9 @@ SUSPICIOUS_WITHDRAWAL_THRESHOLD = 100_000_000  # 100M+ withdrawals are flagged
 RAPID_BET_THRESHOLD = 5  # More than 5 bets in 60 seconds is suspicious
 HIGH_BET_THRESHOLD = 50_000_000  # 50M+ bets are logged
 
+# Stick message tracking
+stick_messages = {}  # {channel_id: {"message_id": int, "content": str, "last_update": datetime}}
+
 # -----------------------------
 # DATABASE
 # -----------------------------
@@ -659,7 +662,9 @@ async def assist(ctx):
             "**!deposit @user amount** - Add gambling amount to a user\n"
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
-            "**!wipeamount @user** - Wipe a user's balance"
+            "**!wipeamount @user** - Wipe a user's balance\n"
+            "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
+            "**!unstick** - Remove the sticky message from the current channel"
         ))
     await ctx.send(embed=embed)
 
@@ -1212,6 +1217,97 @@ async def ticketclose(ctx, *, reason: str = "No reason provided."):
         await ctx.send(f"❌ Error closing ticket: {str(e)}")
 
 
+@bot.command(name="stick")
+async def stick(ctx, *, message: str):
+    """
+    Create a sticky message that stays at the bottom of the channel.
+    The message will automatically repost when other messages are sent.
+    
+    Usage: !stick <message>
+    Example: !stick Please refer to deposit channel to deposit!
+    
+    Owner only command.
+    """
+    # Check if user is owner
+    if ctx.author.id not in OWNER_IDS:
+        await ctx.send("❌ Only bot owners can use this command.")
+        return
+    
+    try:
+        channel_id = ctx.channel.id
+        
+        # Delete the command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        # If there's an existing stick message in this channel, delete it
+        if channel_id in stick_messages:
+            try:
+                old_msg = await ctx.channel.fetch_message(stick_messages[channel_id]["message_id"])
+                await old_msg.delete()
+            except:
+                pass
+        
+        # Post the new stick message
+        stick_msg = await ctx.send(f"📌 {message}")
+        
+        # Store the stick message data
+        stick_messages[channel_id] = {
+            "message_id": stick_msg.id,
+            "content": message,
+            "last_update": datetime.now()
+        }
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error creating stick message: {str(e)}")
+
+
+@bot.command(name="unstick")
+async def unstick(ctx):
+    """
+    Remove the sticky message from the current channel.
+    
+    Usage: !unstick
+    
+    Owner only command.
+    """
+    # Check if user is owner
+    if ctx.author.id not in OWNER_IDS:
+        await ctx.send("❌ Only bot owners can use this command.")
+        return
+    
+    try:
+        channel_id = ctx.channel.id
+        
+        # Delete the command message
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        
+        # Check if there's a stick message in this channel
+        if channel_id not in stick_messages:
+            await ctx.send("❌ No stick message found in this channel.", delete_after=5)
+            return
+        
+        # Delete the stick message
+        try:
+            stick_msg = await ctx.channel.fetch_message(stick_messages[channel_id]["message_id"])
+            await stick_msg.delete()
+        except:
+            pass
+        
+        # Remove from tracking
+        del stick_messages[channel_id]
+        
+        confirm = await ctx.send("✅ Stick message removed.", delete_after=5)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error removing stick message: {str(e)}")
+
+
 # -----------------------------
 # BOT READY
 # -----------------------------
@@ -1242,6 +1338,48 @@ async def on_command_error(ctx, error):
         # Log unexpected errors
         print(f"Error in command {ctx.command}: {error}")
         await ctx.send(f"❌ An unexpected error occurred: {str(error)}")
+
+@bot.event
+async def on_message(message):
+    """Handle messages and manage stick messages."""
+    # Process commands first
+    await bot.process_commands(message)
+    
+    # Ignore bot messages
+    if message.author.bot:
+        return
+    
+    # Check if this channel has a stick message
+    channel_id = message.channel.id
+    if channel_id in stick_messages:
+        stick_data = stick_messages[channel_id]
+        
+        # Check cooldown (5 seconds)
+        time_since_last_update = datetime.now() - stick_data["last_update"]
+        if time_since_last_update.total_seconds() < 5:
+            # Still in cooldown, don't repost
+            return
+        
+        try:
+            # Delete the old stick message
+            old_stick = await message.channel.fetch_message(stick_data["message_id"])
+            await old_stick.delete()
+        except:
+            # Old message already deleted or not found
+            pass
+        
+        try:
+            # Repost the stick message at the bottom
+            new_stick = await message.channel.send(f"📌 {stick_data['content']}")
+            
+            # Update tracking
+            stick_messages[channel_id] = {
+                "message_id": new_stick.id,
+                "content": stick_data["content"],
+                "last_update": datetime.now()
+            }
+        except Exception as e:
+            print(f"Error reposting stick message: {e}")
 
 # -----------------------------
 # RUN BOT
