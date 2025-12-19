@@ -4,6 +4,7 @@ from discord.ui import View, Button
 import sqlite3
 import random
 import os
+import asyncio
 from datetime import datetime, timedelta
 
 # -----------------------------
@@ -54,6 +55,17 @@ c.execute("""
 CREATE TABLE IF NOT EXISTS tickets (
     user_id INTEGER,
     ticket_number INTEGER
+)
+""")
+
+# Ticket metadata for close command
+c.execute("""
+CREATE TABLE IF NOT EXISTS ticket_metadata (
+    channel_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    panel_name TEXT NOT NULL,
+    ticket_name TEXT NOT NULL,
+    open_date TEXT NOT NULL
 )
 """)
 
@@ -504,11 +516,20 @@ class TicketPanelView(View):
                 guild.me: discord.PermissionOverwrite(view_channel=True)
             }
 
+            ticket_name = f"deposit-{user.name}-{ticket_num:03}"
             channel = await guild.create_text_channel(
-                name=f"deposit-{user.name}-{ticket_num:03}",
+                name=ticket_name,
                 category=category,
                 overwrites=overwrites
             )
+            
+            # Store ticket metadata for close command
+            open_date = datetime.utcnow().strftime("%B %d, %Y %I:%M %p")
+            c.execute("""
+                INSERT INTO ticket_metadata (channel_id, user_id, panel_name, ticket_name, open_date)
+                VALUES (?, ?, ?, ?, ?)
+            """, (channel.id, user.id, "Deposit Request", ticket_name, open_date))
+            conn.commit()
 
             await channel.send(
                 content=" ".join(f"<@&{r}>" for r in PING_ROLES),
@@ -561,11 +582,20 @@ class WithdrawalPanelView(View):
                 guild.me: discord.PermissionOverwrite(view_channel=True)
             }
 
+            ticket_name = f"withdraw-{interaction.user.name}-{ticket_num:03}"
             channel = await guild.create_text_channel(
-                name=f"withdraw-{interaction.user.name}-{ticket_num:03}",
+                name=ticket_name,
                 category=category,
                 overwrites=overwrites
             )
+            
+            # Store ticket metadata for close command
+            open_date = datetime.utcnow().strftime("%B %d, %Y %I:%M %p")
+            c.execute("""
+                INSERT INTO ticket_metadata (channel_id, user_id, panel_name, ticket_name, open_date)
+                VALUES (?, ?, ?, ?, ?)
+            """, (channel.id, interaction.user.id, "Withdrawal Request", ticket_name, open_date))
+            conn.commit()
 
             await channel.send(
                 content=" ".join(f"<@&{r}>" for r in PING_ROLES),
@@ -625,6 +655,7 @@ async def assist(ctx):
         embed.add_field(name="🔐 Owner Commands", value=(
             "**!ticketpanel** - Send deposit ticket panel\n"
             "**!withdrawalpanel** - Send withdrawal ticket panel\n"
+            "**!ticketclose [reason]** - Close a ticket with optional reason\n"
             "**!deposit @user amount** - Add gambling amount to a user\n"
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
@@ -1075,6 +1106,111 @@ async def wipeamount(ctx, user: discord.Member = None):
         await ctx.send(f"✅ {user.mention}'s balance wiped.")
     except Exception as e:
         await ctx.send(f"❌ Error wiping balance: {str(e)}")
+
+@bot.command(name="ticketclose")
+async def ticketclose(ctx, *, reason: str = "No reason provided."):
+    """Close a ticket with an optional reason. Only usable by owners in ticket channels."""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only owners can close tickets.")
+        return
+    
+    try:
+        # Get ticket metadata from database
+        c.execute("SELECT user_id, panel_name, ticket_name, open_date FROM ticket_metadata WHERE channel_id=?", (ctx.channel.id,))
+        ticket_data = c.fetchone()
+        
+        if not ticket_data:
+            await ctx.send("❌ This command can only be used in ticket channels.")
+            return
+        
+        user_id, panel_name, ticket_name, open_date = ticket_data
+        ticket_creator = await bot.fetch_user(user_id)
+        
+        if not ticket_creator:
+            await ctx.send("❌ Could not find the ticket creator.")
+            return
+        
+        # Get current timestamp
+        close_date = datetime.utcnow().strftime("%B %d, %Y %I:%M %p")
+        
+        # Create the close notification embed
+        close_embed = discord.Embed(
+            title="🎫 Ticket Closed",
+            description=f"Your ticket has been closed in **Eli's MM!**",
+            color=discord.Color.red()
+        )
+        close_embed.add_field(
+            name="📋 Ticket Information",
+            value=f"**Open Date:** {open_date}\n**Panel Name:** {panel_name}\n**Ticket Name:** {ticket_name}",
+            inline=False
+        )
+        close_embed.add_field(
+            name="🔒 Close Information",
+            value=f"**Closed By:** {ctx.author.mention}\n**Close Date:** {close_date}\n**Close Reason:** {reason}",
+            inline=False
+        )
+        close_embed.set_footer(text="If you have any further questions or concerns, feel free to open a new ticket.")
+        
+        # Try to DM the ticket creator
+        try:
+            await ticket_creator.send(embed=close_embed)
+        except discord.Forbidden:
+            # If DMs are closed, send in the channel before deletion
+            await ctx.send(f"{ticket_creator.mention}, your ticket is being closed but I couldn't DM you:", embed=close_embed)
+        except Exception as e:
+            await ctx.send(f"⚠️ Could not notify {ticket_creator.mention}: {str(e)}")
+        
+        # Create transcript
+        try:
+            messages = []
+            async for m in ctx.channel.history(limit=None, oldest_first=True):
+                timestamp = m.created_at.strftime("%Y-%m-%d %H:%M")
+                messages.append(f"**[{timestamp}] {m.author.display_name}:** {m.content}")
+            
+            transcript_channel = ctx.guild.get_channel(TRANSCRIPT_CHANNEL_ID)
+            if transcript_channel:
+                embed = discord.Embed(title="📄 Ticket Transcript", color=discord.Color.blue())
+                embed.add_field(
+                    name="Ticket Information",
+                    value=f"**Ticket Name:** {ticket_name}\n**Ticket ID:** {ctx.channel.id}\n**Closed By:** {ctx.author.mention}\n**Close Reason:** {reason}",
+                    inline=False
+                )
+                await transcript_channel.send(embed=embed)
+                
+                # Split messages into chunks
+                for i in range(0, len(messages), 10):
+                    chunk = "\n".join(messages[i:i+10])
+                    if len(chunk) > 4096:
+                        await transcript_channel.send(embed=discord.Embed(
+                            description=chunk[:4096],
+                            color=discord.Color.blue()
+                        ))
+                    else:
+                        await transcript_channel.send(embed=discord.Embed(
+                            description=chunk,
+                            color=discord.Color.blue()
+                        ))
+        except Exception as e:
+            await ctx.send(f"⚠️ Error creating transcript: {str(e)}")
+        
+        # Delete ticket metadata from database
+        c.execute("DELETE FROM ticket_metadata WHERE channel_id=?", (ctx.channel.id,))
+        conn.commit()
+        
+        # Delete the channel
+        await ctx.send("✅ Closing ticket in 3 seconds...")
+        await asyncio.sleep(3)
+        
+        try:
+            await ctx.channel.delete()
+        except discord.Forbidden:
+            await ctx.send("❌ Missing permissions to delete this channel.")
+        except discord.HTTPException as e:
+            await ctx.send(f"❌ Error deleting channel: {str(e)}")
+            
+    except Exception as e:
+        await ctx.send(f"❌ Error closing ticket: {str(e)}")
+
 
 # -----------------------------
 # BOT READY
