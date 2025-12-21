@@ -539,11 +539,14 @@ class TicketPanelView(View):
             """, (channel.id, user.id, "Deposit Request", ticket_name, open_date))
             conn.commit()
 
+            # Send ping message first
+            await channel.send(content=" ".join(f"<@&{r}>" for r in PING_ROLES))
+            
+            # Send welcome message without pings
             await channel.send(
-                content=" ".join(f"<@&{r}>" for r in PING_ROLES),
                 embed=discord.Embed(
                     title="💰 Deposit Ticket",
-                    description=f"{user.mention}, thank you for opening a deposit ticket inside **Eli's MM!**",
+                    description=f"Welcome {user.mention} to the deposit tickets of Eli's MM! An owner will be with you very shortly. Please state what you would like to deposit.",
                     color=discord.Color.orange()
                 ),
                 view=TicketCloseView(channel)
@@ -629,15 +632,26 @@ async def ticketpanel(ctx):
     if ctx.author.id not in OWNER_IDS:
         await ctx.send("❌ Only owners can send the ticket panel.")
         return
-    await ctx.send(embed=discord.Embed(
+    embed = discord.Embed(
         title="💰 Deposit Brainrots",
         description=(
-            "**Exchange Rate:** 1$/s brainrot = 1$\n"
-            f"**Minimum Deposit:** {MIN_DEPOSIT:,}$\n"
-            "Click the button below to open a deposit ticket."
+            "Welcome to Eli's MM deposit system! Here's what you need to know:\n\n"
+            "**💱 Exchange Rate:**\n"
+            "• 1$/s SAB (Skibidi After Brainrot) = 1$ gambling currency\n"
+            "• Your SAB balance will be converted 1:1 to gambling credits\n\n"
+            f"**📊 Minimum Deposit:** {MIN_DEPOSIT:,}$\n\n"
+            "**🎰 Gambling Requirements:**\n"
+            "• You must gamble **30% of your balance** before withdrawing\n"
+            "• All gambling games count toward this requirement\n"
+            "• Track your progress with `!amount` command\n\n"
+            "**📝 How to Deposit:**\n"
+            "1. Click the button below to open a deposit ticket\n"
+            "2. An owner will assist you shortly\n"
+            "3. State the SAB amount you want to deposit"
         ),
         color=discord.Color.orange()
-    ), view=TicketPanelView())
+    )
+    await ctx.send(embed=embed, view=TicketPanelView())
 
 @bot.command(name="withdrawalpanel")
 async def withdrawalpanel(ctx):
@@ -1303,7 +1317,7 @@ async def gambledall(ctx):
             title="💰 Total Gambling Statistics",
             description="Gambling activity across all players",
             color=discord.Color.purple(),
-            timestamp=datetime.datetime.utcnow()
+            timestamp=datetime.utcnow()
         )
         
         embed.add_field(
