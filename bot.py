@@ -1962,79 +1962,96 @@ class GladiatorFightView(View):
         p2_stats = GLADIATORS[p2_name]
         
         round_num = 1
-        fight_log = []
+        fight_message = None
+        action_log = []  # Keep last 3 actions
         
         while fight_data["p1_hp"] > 0 and fight_data["p2_hp"] > 0:
-            # Create round embed
+            # Player 1 attacks Player 2
+            action_result = self.process_attack(fight_data, "p1", "p2", p1_stats, p2_stats, p1_name, p2_name)
+            action_log.append(action_result["message"])
+            fight_data["p2_hp"] = action_result["defender_hp"]
+            
+            # Create battle embed
             embed = discord.Embed(
-                title=f"⚔️ GLADIATOR ARENA - Round {round_num}",
-                description="",
+                title=f"⚔️ GLADIATOR ARENA",
+                description=f"**Round {round_num}** | 💰 Prize: {self.bet_amount * 2:,}$",
                 color=discord.Color.orange()
             )
             
-            # Player 1 info
+            # Player 1 info with health bar
             p1_health_bar = self.create_health_bar(fight_data["p1_hp"], p1_stats["hp"])
             embed.add_field(
-                name=f"{p1_stats['icon']} {p1_name} (<@{fight_data['player1']}>)",
-                value=f"HP: {p1_health_bar} {fight_data['p1_hp']}/{p1_stats['hp']}",
-                inline=False
+                name=f"{p1_stats['icon']} {p1_name}",
+                value=f"<@{fight_data['player1']}>\n{p1_health_bar}\n**HP: {fight_data['p1_hp']}/{p1_stats['hp']}**",
+                inline=True
             )
             
-            # Player 2 info
+            # VS separator
+            embed.add_field(
+                name="⚔️",
+                value="**VS**",
+                inline=True
+            )
+            
+            # Player 2 info with health bar
             p2_health_bar = self.create_health_bar(fight_data["p2_hp"], p2_stats["hp"])
             embed.add_field(
-                name=f"{p2_stats['icon']} {p2_name} (<@{fight_data['player2']}>)",
-                value=f"HP: {p2_health_bar} {fight_data['p2_hp']}/{p2_stats['hp']}",
-                inline=False
+                name=f"{p2_stats['icon']} {p2_name}",
+                value=f"<@{fight_data['player2']}>\n{p2_health_bar}\n**HP: {fight_data['p2_hp']}/{p2_stats['hp']}**",
+                inline=True
             )
             
-            # Show recent action if exists
-            if fight_log:
+            # Show recent actions (last 3)
+            if action_log:
+                recent_actions = "\n".join(action_log[-3:])
                 embed.add_field(
-                    name="⚡ Last Action",
-                    value=fight_log[-1],
+                    name="⚡ Battle Log",
+                    value=recent_actions,
                     inline=False
                 )
             
-            embed.set_footer(text=f"💰 Winner takes: {self.bet_amount * 2:,}$ | Round {round_num}")
+            embed.set_footer(text=f"Round {round_num} • The battle rages on!")
             
             # Send or update embed
-            if round_num == 1:
+            if fight_message is None:
                 fight_message = await channel.send(embed=embed)
             else:
                 await fight_message.edit(embed=embed)
             
-            await asyncio.sleep(2.5)  # Pause between actions
-            
-            # Player 1 attacks Player 2
-            action_result = self.process_attack(fight_data, "p1", "p2", p1_stats, p2_stats, p1_name, p2_name)
-            fight_log.append(action_result["message"])
-            fight_data["p2_hp"] = action_result["defender_hp"]
-            
+            # Check if P2 died
             if fight_data["p2_hp"] <= 0:
                 break
             
-            # Update with P1's attack
-            p2_health_bar = self.create_health_bar(fight_data["p2_hp"], p2_stats["hp"])
-            embed.set_field_at(
-                1,
-                name=f"{p2_stats['icon']} {p2_name} (<@{fight_data['player2']}>)",
-                value=f"HP: {p2_health_bar} {fight_data['p2_hp']}/{p2_stats['hp']}",
-                inline=False
-            )
-            embed.set_field_at(
-                2,
-                name="⚡ Last Action",
-                value=action_result["message"],
-                inline=False
-            )
-            await fight_message.edit(embed=embed)
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(2.5)  # Pause between actions
             
             # Player 2 attacks Player 1
             action_result = self.process_attack(fight_data, "p2", "p1", p2_stats, p1_stats, p2_name, p1_name)
-            fight_log.append(action_result["message"])
+            action_log.append(action_result["message"])
             fight_data["p1_hp"] = action_result["defender_hp"]
+            
+            # Update embed with P2's attack
+            p1_health_bar = self.create_health_bar(fight_data["p1_hp"], p1_stats["hp"])
+            embed.set_field_at(
+                0,
+                name=f"{p1_stats['icon']} {p1_name}",
+                value=f"<@{fight_data['player1']}>\n{p1_health_bar}\n**HP: {fight_data['p1_hp']}/{p1_stats['hp']}**",
+                inline=True
+            )
+            
+            # Update battle log
+            recent_actions = "\n".join(action_log[-3:])
+            # Find the battle log field index (should be field 3)
+            for i, field in enumerate(embed.fields):
+                if field.name == "⚡ Battle Log":
+                    embed.set_field_at(i, name="⚡ Battle Log", value=recent_actions, inline=False)
+                    break
+            
+            await fight_message.edit(embed=embed)
+            await asyncio.sleep(2.5)
+            
+            # Check if P1 died
+            if fight_data["p1_hp"] <= 0:
+                break
             
             round_num += 1
         
@@ -2080,16 +2097,51 @@ class GladiatorFightView(View):
         log_bet_activity(winner_id, self.bet_amount, "gladiator", "win")
         log_bet_activity(loser_id, self.bet_amount, "gladiator", "loss")
         
+        # Get winner's remaining HP
+        winner_hp = fight_data['p1_hp'] if winner_id == fight_data['player1'] else fight_data['p2_hp']
+        winner_max_hp = GLADIATORS[winner_name]["hp"]
+        winner_health_bar = self.create_health_bar(winner_hp, winner_max_hp)
+        
         # Create victory embed
         victory_embed = discord.Embed(
-            title=f"🏆 {winner_icon} {winner_name} WINS!",
-            description=f"<@{winner_id}> is victorious in the arena!",
+            title=f"🏆 VICTORY!",
+            description=f"**{winner_icon} {winner_name}** defeats **{loser_name}** in an epic battle!",
             color=discord.Color.gold()
         )
         
-        victory_embed.add_field(name="💰 Winnings", value=f"+{self.bet_amount:,}$", inline=True)
-        victory_embed.add_field(name="💔 Loss", value=f"<@{loser_id}> lost {self.bet_amount:,}$", inline=True)
-        victory_embed.add_field(name="📊 Final Score", value=f"{winner_name}: {fight_data['p1_hp' if winner_id == fight_data['player1'] else 'p2_hp']} HP\n{loser_name}: 0 HP", inline=False)
+        # Winner info
+        victory_embed.add_field(
+            name=f"👑 Champion",
+            value=f"<@{winner_id}>\n{winner_health_bar}\n**Remaining HP: {winner_hp}/{winner_max_hp}**",
+            inline=True
+        )
+        
+        # Loser info
+        victory_embed.add_field(
+            name=f"💀 Defeated",
+            value=f"<@{loser_id}>\n💀 `░░░░░░░░░░` 0%\n**HP: 0/{GLADIATORS[loser_name]['hp']}**",
+            inline=True
+        )
+        
+        # Financial summary
+        victory_embed.add_field(
+            name="💰 Prize Money",
+            value=f"**Winner:** +{self.bet_amount:,}$\n**Loser:** -{self.bet_amount:,}$",
+            inline=False
+        )
+        
+        # Battle statistics
+        battle_stats = f"⚔️ **Rounds Fought:** {round_num}\n"
+        battle_stats += f"💪 **Total Actions:** {len(action_log)}\n"
+        battle_stats += f"🎯 **Last 3 Actions:**\n"
+        battle_stats += "\n".join(f"• {action}" for action in action_log[-3:])
+        
+        victory_embed.add_field(
+            name="📊 Battle Summary",
+            value=battle_stats,
+            inline=False
+        )
+        
         victory_embed.set_footer(text="🔄 Click 'Next Round' for a rematch with the same gladiators!")
         
         # Enable next round button
