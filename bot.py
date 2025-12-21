@@ -676,6 +676,7 @@ async def assist(ctx):
             "**!deposit @user amount** - Add gambling amount to a user\n"
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
+            "**!gambledall** - View total gambling statistics across all players\n"
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
             "**!unstick** - Remove the sticky message from the current channel"
@@ -1256,6 +1257,96 @@ async def amountall(ctx, page: int = 1):
         ))
     except Exception as e:
         await ctx.send(f"❌ Error fetching balances: {str(e)}")
+
+@bot.command(name="gambledall")
+async def gambledall(ctx):
+    """Owner command to view total gambling statistics across all players."""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    
+    try:
+        # Get total gambled statistics
+        c.execute("SELECT SUM(total_gambled), SUM(gambled) FROM users")
+        result = c.fetchone()
+        total_gambled_alltime = result[0] if result[0] is not None else 0
+        current_session_gambled = result[1] if result[1] is not None else 0
+        
+        # Get count of active gamblers (players who have gambled at least once)
+        c.execute("SELECT COUNT(*) FROM users WHERE total_gambled > 0")
+        active_gamblers = c.fetchone()[0]
+        
+        # Get total registered players
+        c.execute("SELECT COUNT(*) FROM users")
+        total_players = c.fetchone()[0]
+        
+        # Get top gambler
+        c.execute("SELECT user_id, total_gambled FROM users ORDER BY total_gambled DESC LIMIT 1")
+        top_result = c.fetchone()
+        top_gambler_id = top_result[0] if top_result else None
+        top_gambled_amount = top_result[1] if top_result else 0
+        
+        # Try to fetch top gambler username
+        top_gambler_display = "N/A"
+        if top_gambler_id and top_gambled_amount > 0:
+            try:
+                top_user = await bot.fetch_user(top_gambler_id)
+                top_gambler_display = f"{top_user.mention} - {format_money(top_gambled_amount)}"
+            except:
+                top_gambler_display = f"<@{top_gambler_id}> - {format_money(top_gambled_amount)}"
+        
+        # Calculate average gambled per active gambler
+        avg_gambled = total_gambled_alltime // active_gamblers if active_gamblers > 0 else 0
+        
+        # Create embed
+        embed = discord.Embed(
+            title="💰 Total Gambling Statistics",
+            description="Gambling activity across all players",
+            color=discord.Color.purple(),
+            timestamp=datetime.datetime.utcnow()
+        )
+        
+        embed.add_field(
+            name="📊 Total Gambled (All-Time)",
+            value=format_money(total_gambled_alltime),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🎲 Active Gamblers",
+            value=f"{active_gamblers} players have gambled",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🎯 Top Gambler",
+            value=top_gambler_display,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📈 Total Players",
+            value=f"{total_players} registered users",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="💵 Average Gambled per Player",
+            value=format_money(avg_gambled),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 Current Session Gambled",
+            value=format_money(current_session_gambled),
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching gambling statistics: {str(e)}")
+        print(f"Error in gambledall command: {e}")
 
 @bot.command(name="wipeamount")
 async def wipeamount(ctx, user: discord.Member = None):
