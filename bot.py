@@ -1533,8 +1533,8 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
             await ctx.send("❌ Invalid number range! Must be a number between 1-5000.")
             return
 
-        if max_num < 1 or max_num > 5000:
-            await ctx.send("❌ Number range must be between 1-5000!")
+        if max_num < 10 or max_num > 5000:
+            await ctx.send("❌ Number range must be between 10-5000! Minimum is 10.")
             return
 
         # Get user data
@@ -1707,10 +1707,11 @@ class CrashView(View):
         self.bet_amount = bet_amount
         self.crash_point = crash_point
         self.ctx = ctx
-        self.current_multiplier = 1.0
+        self.current_multiplier = 0.0
         self.cashed_out = False
         self.crashed = False
         self.task = None
+        self.low_cashout_count = 0  # Track cashouts at 0.1x
     
     async def start_crash_animation(self, message):
         """Animate the multiplier increasing until crash."""
@@ -1811,6 +1812,13 @@ class CrashView(View):
         if self.crashed:
             await interaction.response.send_message("❌ Too late! The game already crashed!", ephemeral=True)
             return
+        
+        # Check if cashing out at 0.1x more than twice
+        if self.current_multiplier <= 0.1:
+            self.low_cashout_count += 1
+            if self.low_cashout_count > 2:
+                await interaction.response.send_message("❌ Error: Cannot cash out at 0.1x more than twice! Wait for the multiplier to increase.", ephemeral=True)
+                return
         
         # Cash out successfully
         self.cashed_out = True
@@ -2063,6 +2071,95 @@ class GladiatorConfirmView(View):
         
         await interaction.response.edit_message(embed=embed, view=self)
 
+class GladiatorRematchConfirmView(View):
+    """View for confirming gladiator rematch - both players must confirm."""
+    
+    def __init__(self, player1_id, player2_id, bet_amount, challenge_id):
+        super().__init__(timeout=60)  # 60 second timeout for confirmation
+        self.player1_id = player1_id
+        self.player2_id = player2_id
+        self.bet_amount = bet_amount
+        self.challenge_id = challenge_id
+        self.confirmed_players = set()
+    
+    @discord.ui.button(label="✅ Confirm", style=discord.ButtonStyle.green)
+    async def confirm_rematch(self, interaction: discord.Interaction, button: Button):
+        # Check if it's one of the fighters
+        if interaction.user.id not in [self.player1_id, self.player2_id]:
+            await interaction.response.send_message("❌ Only the fighters can confirm!", ephemeral=True)
+            return
+        
+        # Check if already confirmed
+        if interaction.user.id in self.confirmed_players:
+            await interaction.response.send_message("✅ You already confirmed!", ephemeral=True)
+            return
+        
+        # Add to confirmed set
+        self.confirmed_players.add(interaction.user.id)
+        
+        # Update message
+        if len(self.confirmed_players) == 1:
+            await interaction.response.send_message(f"✅ <@{interaction.user.id}> confirmed! Waiting for the other player...", ephemeral=False)
+        elif len(self.confirmed_players) == 2:
+            # Both confirmed - start the fight
+            await interaction.response.send_message("✅ Both players confirmed! Starting the rematch...", ephemeral=False)
+            
+            # Disable buttons
+            for item in self.children:
+                item.disabled = True
+            await interaction.message.edit(view=self)
+            
+            # Start the fight
+            if self.challenge_id in gladiator_fights:
+                fight_data = gladiator_fights[self.challenge_id]
+                
+                # Check both players still have balance
+                p1_data = get_user(self.player1_id)
+                p2_data = get_user(self.player2_id)
+                
+                if p1_data[1] < self.bet_amount:
+                    await interaction.followup.send(f"❌ <@{self.player1_id}> has insufficient balance for another round!")
+                    del gladiator_fights[self.challenge_id]
+                    return
+                
+                if p2_data[1] < self.bet_amount:
+                    await interaction.followup.send(f"❌ <@{self.player2_id}> has insufficient balance for another round!")
+                    del gladiator_fights[self.challenge_id]
+                    return
+                
+                # Reset HP for new round
+                fight_data['p1_hp'] = GLADIATORS[fight_data['p1_gladiator']]["hp"]
+                fight_data['p2_hp'] = GLADIATORS[fight_data['p2_gladiator']]["hp"]
+                
+                # Create new fight view
+                fight_view = GladiatorFightView(self.player1_id, self.player2_id, self.bet_amount, self.challenge_id)
+                
+                # Start the fight animation
+                await fight_view.run_fight_animation(interaction.channel, fight_data)
+    
+    @discord.ui.button(label="❌ Cancel", style=discord.ButtonStyle.red)
+    async def cancel_rematch(self, interaction: discord.Interaction, button: Button):
+        # Check if it's one of the fighters
+        if interaction.user.id not in [self.player1_id, self.player2_id]:
+            await interaction.response.send_message("❌ Only the fighters can cancel!", ephemeral=True)
+            return
+        
+        # Disable buttons
+        for item in self.children:
+            item.disabled = True
+        
+        embed = discord.Embed(
+            title="❌ Rematch Cancelled",
+            description=f"<@{interaction.user.id}> cancelled the rematch.",
+            color=discord.Color.red()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+        # Clean up
+        if self.challenge_id in gladiator_fights:
+            del gladiator_fights[self.challenge_id]
+
 class GladiatorFightView(View):
     """View for active gladiator fight with next round button."""
     
@@ -2080,34 +2177,23 @@ class GladiatorFightView(View):
             await interaction.response.send_message("❌ Only the fighters can start the next round!", ephemeral=True)
             return
         
-        # Disable button during fight
+        # Create confirmation embed
+        confirm_embed = discord.Embed(
+            title="⚔️ Confirm Next Round?",
+            description=f"<@{self.player1_id}> and <@{self.player2_id}>, both players must confirm to start the next round!\n\n**Bet Amount:** {self.bet_amount:,}$\n**Prize:** {self.bet_amount * 2:,}$",
+            color=discord.Color.orange()
+        )
+        confirm_embed.set_footer(text="Both players must click '✅ Confirm' to start the fight!")
+        
+        # Create confirmation view
+        confirm_view = GladiatorRematchConfirmView(self.player1_id, self.player2_id, self.bet_amount, self.challenge_id)
+        
+        # Disable next round button
         button.disabled = True
         await interaction.response.edit_message(view=self)
         
-        # Start a new fight with same gladiators
-        if self.challenge_id in gladiator_fights:
-            fight_data = gladiator_fights[self.challenge_id]
-            
-            # Check both players still have balance
-            p1_data = get_user(self.player1_id)
-            p2_data = get_user(self.player2_id)
-            
-            if p1_data[1] < self.bet_amount:
-                await interaction.followup.send(f"❌ <@{self.player1_id}> has insufficient balance for another round!")
-                del gladiator_fights[self.challenge_id]
-                return
-            
-            if p2_data[1] < self.bet_amount:
-                await interaction.followup.send(f"❌ <@{self.player2_id}> has insufficient balance for another round!")
-                del gladiator_fights[self.challenge_id]
-                return
-            
-            # Reset gladiator HP
-            fight_data["p1_hp"] = GLADIATORS[fight_data["p1_gladiator"]]["hp"]
-            fight_data["p2_hp"] = GLADIATORS[fight_data["p2_gladiator"]]["hp"]
-            
-            # Start new fight round
-            await self.run_fight_animation(interaction.channel, fight_data)
+        # Send confirmation message
+        await interaction.followup.send(embed=confirm_embed, view=confirm_view)
 
     async def run_fight_animation(self, channel, fight_data):
         """Run the animated fight sequence."""
