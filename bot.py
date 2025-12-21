@@ -4019,7 +4019,11 @@ async def limbo(ctx, amount: str):
             return
         
         # Parse bet amount
-        bet_amount = parse_amount(amount)
+        bet_amount = parse_money(amount)
+        if bet_amount <= 0:
+            await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+            return
+        
         if bet_amount < 1_000_000:
             await ctx.send("❌ Minimum bet is 1M!")
             return
