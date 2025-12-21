@@ -657,7 +657,7 @@ async def assist(ctx):
         "**!pick [number/gladiator]** - Pick your lucky number OR gladiator\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
-        "**!rules** - View all gambling game rules and info"
+        "**!games** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
@@ -2328,133 +2328,316 @@ async def pick_gladiator(ctx, *, gladiator_name: str):
 # -----------------------------
 # 📜 RULES COMMAND
 # -----------------------------
-@bot.command(name="rules")
-async def rules(ctx):
-    """
-    Display the rules and information for all gambling games.
+# Games Pagination View
+class GamesView(discord.ui.View):
+    """View for paginated games information."""
     
-    Usage: !rules
-    """
-    try:
-        embed = discord.Embed(
-            title="🎰 Gambling Games Rules",
-            description="Welcome to Eli's MM gambling system! Here are all the games you can play:",
+    def __init__(self, user_id):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.user_id = user_id
+        self.current_page = 0
+        self.pages = self.create_pages()
+        
+    def create_pages(self):
+        """Create all game information pages."""
+        pages = []
+        
+        # Page 1: Coinflip
+        embed1 = discord.Embed(
+            title="🪙 Coinflip",
+            description="**Simple 50/50 chance game with 2x multiplier**",
+            color=discord.Color.gold()
+        )
+        embed1.add_field(
+            name="📋 Command",
+            value="`!coinflip <amount> <heads/tails>`",
+            inline=False
+        )
+        embed1.add_field(
+            name="💡 Example",
+            value="`!coinflip 10m heads`",
+            inline=False
+        )
+        embed1.add_field(
+            name="🎮 How to Play",
+            value="Choose heads or tails. If the coin lands on your choice, you win 2x your bet!",
+            inline=False
+        )
+        embed1.add_field(
+            name="💰 Multiplier",
+            value="**2x** (100% return on win)",
+            inline=True
+        )
+        embed1.add_field(
+            name="🎯 Win Chance",
+            value="**50%**",
+            inline=True
+        )
+        embed1.set_footer(text="Page 1/6 • Use the buttons below to see other games")
+        pages.append(embed1)
+        
+        # Page 2: Slots
+        embed2 = discord.Embed(
+            title="🎰 Slots",
+            description="**3x3 slot machine with multiple winning patterns**",
+            color=discord.Color.purple()
+        )
+        embed2.add_field(
+            name="📋 Command",
+            value="`!slots <amount>`",
+            inline=False
+        )
+        embed2.add_field(
+            name="💡 Example",
+            value="`!slots 5m`",
+            inline=False
+        )
+        embed2.add_field(
+            name="🎮 How to Play",
+            value="Spin a 3x3 slot machine! Match 3 symbols in a row, column, or diagonal to win.",
+            inline=False
+        )
+        embed2.add_field(
+            name="💎 Multipliers",
+            value=(
+                "• 7️⃣ **Jackpot** = 5.0x\n"
+                "• 💎 **Diamond** = 3.0x\n"
+                "• ⭐ **Star** = 2.5x\n"
+                "• 🍇 **Grape** = 2.0x\n"
+                "• 🍊 **Orange** = 1.8x\n"
+                "• 🍋 **Lemon** = 1.5x\n"
+                "• 🍒 **Cherry** = 1.2x"
+            ),
+            inline=False
+        )
+        embed2.add_field(
+            name="✨ Features",
+            value="Click 🔄 **Spin Again** to replay with same bet!",
+            inline=False
+        )
+        embed2.set_footer(text="Page 2/6 • Use the buttons below to see other games")
+        pages.append(embed2)
+        
+        # Page 3: Lucky Number
+        embed3 = discord.Embed(
+            title="🎲 Lucky Number",
+            description="**Risk-based number guessing with massive multipliers**",
             color=discord.Color.blue()
         )
-        
-        # Coinflip
-        embed.add_field(
-            name="🪙 Coinflip",
+        embed3.add_field(
+            name="📋 Commands",
             value=(
-                "**Command:** `!coinflip <amount> <heads/tails>`\n"
-                "**Example:** `!coinflip 10m heads`\n"
-                "**How to Play:** Choose heads or tails. If the coin lands on your choice, you win 2x your bet!\n"
-                "**Multiplier:** 2x (100% return on win)\n"
-                "**Win Chance:** 50%\n"
+                "1. `!luckynumber <amount> <max_number>` - Start game\n"
+                "2. `!pick <number>` - Make your guess"
             ),
             inline=False
         )
-        
-        # Slots
-        embed.add_field(
-            name="🎰 Slots",
+        embed3.add_field(
+            name="💡 Example",
+            value="`!luckynumber 1m 100` then `!pick 42`",
+            inline=False
+        )
+        embed3.add_field(
+            name="🎮 How to Play",
+            value="Choose a number range (1-5000), then guess the lucky number!",
+            inline=False
+        )
+        embed3.add_field(
+            name="🎯 Risk Levels & Multipliers",
             value=(
-                "**Command:** `!slots <amount>`\n"
-                "**Example:** `!slots 5m`\n"
-                "**How to Play:** Spin a 3x3 slot machine! Match 3 symbols in a row, column, or diagonal to win.\n"
-                "**Multipliers:**\n"
-                "  • 7️⃣ Jackpot = 5.0x\n"
-                "  • 💎 Diamond = 3.0x\n"
-                "  • ⭐ Star = 2.5x\n"
-                "  • 🍇 Grape = 2.0x\n"
-                "  • 🍊 Orange = 1.8x\n"
-                "  • 🍋 Lemon = 1.5x\n"
-                "  • 🍒 Cherry = 1.2x\n"
-                "**Features:** Click 🔄 Spin Again to replay with same bet!\n"
+                "• **1-10:** Low risk → **8x**\n"
+                "• **1-50:** Medium risk → **40x**\n"
+                "• **1-100:** High risk → **80x**\n"
+                "• **1-500:** Very high risk → **400x**\n"
+                "• **1-1000:** Extreme risk → **800x**\n"
+                "• **1-2500:** Ultra risk → **2000x**\n"
+                "• **1-5000:** Maximum risk → **4000x**"
             ),
             inline=False
         )
+        embed3.add_field(
+            name="⚠️ Note",
+            value="Higher ranges = bigger multipliers but lower win chance!",
+            inline=False
+        )
+        embed3.set_footer(text="Page 3/6 • Use the buttons below to see other games")
+        pages.append(embed3)
         
-        # Lucky Number
-        embed.add_field(
-            name="🎲 Lucky Number",
+        # Page 4: Crash
+        embed4 = discord.Embed(
+            title="🚀 Crash",
+            description="**Real-time multiplier game with cash-out mechanic**",
+            color=discord.Color.green()
+        )
+        embed4.add_field(
+            name="📋 Command",
+            value="`!crash <amount>`",
+            inline=False
+        )
+        embed4.add_field(
+            name="💡 Example",
+            value="`!crash 10m`",
+            inline=False
+        )
+        embed4.add_field(
+            name="🎮 How to Play",
+            value="A multiplier starts at 1.0x and climbs higher. Cash out before it crashes to win!",
+            inline=False
+        )
+        embed4.add_field(
+            name="📊 Crash Distribution",
             value=(
-                "**Commands:** \n"
-                "  1. `!luckynumber <amount> <max_number>` - Start game\n"
-                "  2. `!pick <number>` - Make your guess\n"
-                "**Example:** `!luckynumber 1m 100` then `!pick 42`\n"
-                "**How to Play:** Choose a number range (1-5000), then guess the lucky number!\n"
-                "**Risk Levels & Multipliers:**\n"
-                "  • 1-10: Low risk → 8x\n"
-                "  • 1-50: Medium risk → 40x\n"
-                "  • 1-100: High risk → 80x\n"
-                "  • 1-500: Very high risk → 400x\n"
-                "  • 1-1000: Extreme risk → 800x\n"
-                "  • 1-2500: Ultra risk → 2000x\n"
-                "  • 1-5000: Maximum risk → 4000x\n"
-                "**Note:** Higher ranges = bigger multipliers but lower win chance!\n"
+                "• **50%:** 1.1x-1.5x (very common)\n"
+                "• **25%:** 1.5x-2.5x (common)\n"
+                "• **15%:** 2.5x-5.0x (uncommon)\n"
+                "• **7%:** 5.0x-10.0x (rare)\n"
+                "• **3%:** 10.0x-50.0x (very rare jackpot!)"
             ),
             inline=False
         )
+        embed4.add_field(
+            name="💰 Winnings",
+            value="Bet amount × multiplier when you cash out",
+            inline=False
+        )
+        embed4.add_field(
+            name="✨ Features",
+            value="Click 💵 **Cash Out** button to secure your winnings at any time!",
+            inline=False
+        )
+        embed4.add_field(
+            name="⚠️ Risk",
+            value="If you don't cash out before the crash, you lose your entire bet",
+            inline=False
+        )
+        embed4.set_footer(text="Page 4/6 • Use the buttons below to see other games")
+        pages.append(embed4)
         
-        # Crash
-        embed.add_field(
-            name="🚀 Crash",
+        # Page 5: Gladiator Fights
+        embed5 = discord.Embed(
+            title="⚔️ Gladiator Fights",
+            description="**Epic PvP battles with 8 unique gladiators**",
+            color=discord.Color.orange()
+        )
+        embed5.add_field(
+            name="📋 Commands",
             value=(
-                "**Command:** `!crash <amount>`\n"
-                "**Example:** `!crash 10m`\n"
-                "**How to Play:** A multiplier starts at 1.0x and climbs higher. Cash out before it crashes to win!\n"
-                "**Strategy:** The longer you wait, the higher the multiplier - but higher risk of crashing!\n"
-                "**Crash Distribution:**\n"
-                "  • 50%: 1.1x-1.5x (very common)\n"
-                "  • 25%: 1.5x-2.5x (common)\n"
-                "  • 15%: 2.5x-5.0x (uncommon)\n"
-                "  • 7%: 5.0x-10.0x (rare)\n"
-                "  • 3%: 10.0x-50.0x (very rare jackpot!)\n"
-                "**Your Winnings:** Bet amount × multiplier when you cash out\n"
-                "**Features:** Click 💵 Cash Out button to secure your winnings at any time!\n"
-                "**Risk:** If you don't cash out before the crash, you lose your entire bet\n"
+                "1. `!fight @user <amount>` - Challenge a player\n"
+                "2. `!pick <gladiator>` - Select your fighter"
             ),
             inline=False
         )
-        
-        # Gladiator Fights
-        embed.add_field(
-            name="⚔️ Gladiator Fights",
+        embed5.add_field(
+            name="💡 Example",
+            value="`!fight @John 50m` → `!pick Maximus`",
+            inline=False
+        )
+        embed5.add_field(
+            name="🎮 How to Play",
+            value="Challenge another player to a 1v1 gladiator duel! Both bet the same amount, winner takes all!",
+            inline=False
+        )
+        embed5.add_field(
+            name="🏛️ Gladiators",
+            value="8 unique fighters with different stats (HP, Attack, Defense, Dodge)",
+            inline=False
+        )
+        embed5.add_field(
+            name="⚔️ Combat Mechanics",
             value=(
-                "**Command:** `!fight @user <amount>` then `!pick <gladiator>`\n"
-                "**Example:** `!fight @John 50m` → `!pick Maximus`\n"
-                "**How to Play:** Challenge another player to a 1v1 gladiator duel! Both bet the same amount, winner takes all!\n"
-                "**Gladiators:** 8 unique fighters with different stats (HP, Attack, Defense, Dodge)\n"
-                "**Combat:** Turn-based with special mechanics:\n"
-                "  • 💨 Dodge: Avoid damage + regenerate 5-15 HP\n"
-                "  • 🛡️ Block: Reduce damage by 66% + regenerate 3-10 HP\n"
-                "  • ⚔️ Attack: Deal damage based on your gladiator's power\n"
-                "**Features:** Real-time animated combat, health bars, 🔄 rematch button\n"
-                "**Winner Takes All:** Winner gets both bets (2x your wager!)\n"
+                "• 💨 **Dodge:** Avoid damage + regenerate 5-15 HP\n"
+                "• 🛡️ **Block:** Reduce damage by 66% + regenerate 3-10 HP\n"
+                "• ⚔️ **Attack:** Deal damage based on your gladiator's power"
             ),
             inline=False
         )
-        
-        # General Rules
-        embed.add_field(
-            name="📋 General Rules",
-            value=(
-                "• **Deposit Requirement:** Minimum 10M deposit required\n"
-                "• **Gambling Requirement:** Must gamble 30% of your balance before withdrawing\n"
-                "• **Balance Updates:** All wins/losses update your balance instantly\n"
-                "• **Fraud Detection:** Rapid betting and high-value bets are monitored\n"
-                "• **Withdrawals:** Use `!withdraw` when you meet the gambling requirement\n"
-            ),
+        embed5.add_field(
+            name="✨ Features",
+            value="Real-time animated combat, health bars, 🔄 rematch button",
             inline=False
         )
+        embed5.add_field(
+            name="🏆 Winner Takes All",
+            value="Winner gets both bets (2x your wager!)",
+            inline=False
+        )
+        embed5.set_footer(text="Page 5/6 • Use the buttons below to see other games")
+        pages.append(embed5)
         
-        embed.set_footer(text="🎲 Gamble responsibly! • Use !assist for more commands")
+        # Page 6: General Rules
+        embed6 = discord.Embed(
+            title="📋 General Rules",
+            description="**Important information about the gambling system**",
+            color=discord.Color.red()
+        )
+        embed6.add_field(
+            name="💵 Deposit Requirement",
+            value="Minimum **10M** deposit required",
+            inline=False
+        )
+        embed6.add_field(
+            name="🎲 Gambling Requirement",
+            value="Must gamble **30%** of your balance before withdrawing",
+            inline=False
+        )
+        embed6.add_field(
+            name="⚡ Balance Updates",
+            value="All wins/losses update your balance instantly",
+            inline=False
+        )
+        embed6.add_field(
+            name="🛡️ Fraud Detection",
+            value="Rapid betting and high-value bets are monitored",
+            inline=False
+        )
+        embed6.add_field(
+            name="💸 Withdrawals",
+            value="Use `!withdraw` when you meet the gambling requirement",
+            inline=False
+        )
+        embed6.add_field(
+            name="ℹ️ More Commands",
+            value="Use `!assist` to see all available commands",
+            inline=False
+        )
+        embed6.set_footer(text="Page 6/6 • Use the buttons below to see other games")
+        pages.append(embed6)
         
-        await ctx.send(embed=embed)
+        return pages
+    
+    @discord.ui.button(label="<", style=discord.ButtonStyle.primary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to previous page."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your games menu!", ephemeral=True)
+            return
         
+        self.current_page = (self.current_page - 1) % len(self.pages)
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+    
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to next page."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your games menu!", ephemeral=True)
+            return
+        
+        self.current_page = (self.current_page + 1) % len(self.pages)
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
+
+@bot.command(name="games")
+async def games(ctx):
+    """
+    Display information about all gambling games with pagination.
+    
+    Usage: !games
+    """
+    try:
+        view = GamesView(ctx.author.id)
+        await ctx.send(embed=view.pages[0], view=view)
     except Exception as e:
-        await ctx.send(f"❌ Error displaying rules: {str(e)}")
+        await ctx.send(f"❌ Error displaying games: {str(e)}")
 
 
 # -----------------------------
