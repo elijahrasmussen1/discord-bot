@@ -655,6 +655,7 @@ async def assist(ctx):
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
         "**!pick [number]** - Pick your lucky number\n"
+        "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!rules** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
@@ -1316,6 +1317,9 @@ async def unstick(ctx):
 # Store active lucky number games: {user_id: {"bet": amount, "range": max_num, "lucky_num": num, "timestamp": datetime}}
 lucky_number_games = {}
 
+# Store active crash games: {user_id: {"bet": amount, "crash_point": float, "timestamp": datetime, "message": Message}}
+crash_games = {}
+
 def calculate_lucky_number_multiplier(max_range):
     """Calculate fair multiplier based on risk (odds of winning)."""
     if max_range <= 10:
@@ -1536,6 +1540,278 @@ async def pick(ctx, number: str = None):
         await ctx.send(f"❌ Error picking number: {str(e)}")
 
 # -----------------------------
+# 🚀 CRASH GAME
+# -----------------------------
+class CrashView(View):
+    """Interactive view for the Crash gambling game."""
+    def __init__(self, user_id, bet_amount, crash_point, ctx):
+        super().__init__(timeout=120)  # 2 minute timeout
+        self.user_id = user_id
+        self.bet_amount = bet_amount
+        self.crash_point = crash_point
+        self.ctx = ctx
+        self.current_multiplier = 1.0
+        self.cashed_out = False
+        self.crashed = False
+        self.task = None
+    
+    async def start_crash_animation(self, message):
+        """Animate the multiplier increasing until crash."""
+        try:
+            while not self.cashed_out and not self.crashed:
+                # Increase multiplier
+                self.current_multiplier += 0.1
+                self.current_multiplier = round(self.current_multiplier, 2)
+                
+                # Check if we've reached the crash point
+                if self.current_multiplier >= self.crash_point:
+                    self.crashed = True
+                    self.current_multiplier = self.crash_point
+                    
+                    # Disable the cash out button
+                    for item in self.children:
+                        item.disabled = True
+                    
+                    # Update to crash embed
+                    embed = discord.Embed(
+                        title="💥 CRASH!",
+                        description=f"The multiplier crashed at **{self.crash_point}x**!",
+                        color=discord.Color.red()
+                    )
+                    embed.add_field(name="💸 Final Multiplier", value=f"**{self.crash_point}x**", inline=True)
+                    embed.add_field(name="💔 You Lost", value=f"{self.bet_amount:,}$", inline=True)
+                    embed.add_field(name="🎲 Result", value="**CRASHED**", inline=True)
+                    embed.set_footer(text="Better luck next time! Try !crash <amount> to play again.")
+                    
+                    await message.edit(embed=embed, view=self)
+                    
+                    # Update user balance (loss)
+                    user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+                    balance -= self.bet_amount
+                    gambled += self.bet_amount
+                    total_gambled += self.bet_amount
+                    
+                    c.execute(
+                        "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                        (balance, gambled, total_gambled, self.user_id)
+                    )
+                    conn.commit()
+                    
+                    # Log activity
+                    await log_bet_activity(self.user_id, self.bet_amount, "crash", "loss")
+                    await log_transaction(
+                        self.user_id,
+                        "crash_bet",
+                        self.bet_amount,
+                        balance + self.bet_amount,
+                        balance,
+                        f"Crash: Crashed at {self.crash_point}x, LOST"
+                    )
+                    
+                    # Remove from active games
+                    if self.user_id in crash_games:
+                        del crash_games[self.user_id]
+                    
+                    break
+                
+                # Update embed with current multiplier
+                potential_win = int(self.bet_amount * self.current_multiplier)
+                
+                embed = discord.Embed(
+                    title="🚀 Crash Game - IN PROGRESS",
+                    description=f"The multiplier is climbing! Cash out before it crashes!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="📈 Current Multiplier", value=f"**{self.current_multiplier}x**", inline=True)
+                embed.add_field(name="💰 Potential Win", value=f"**{potential_win:,}$**", inline=True)
+                embed.add_field(name="🎲 Bet Amount", value=f"{self.bet_amount:,}$", inline=True)
+                embed.set_footer(text="Click 'Cash Out' to secure your winnings before the crash!")
+                
+                try:
+                    await message.edit(embed=embed, view=self)
+                except discord.errors.NotFound:
+                    # Message was deleted
+                    break
+                
+                # Wait before next update (gets faster as multiplier increases)
+                wait_time = max(0.3, 1.0 - (self.current_multiplier - 1.0) * 0.05)
+                await asyncio.sleep(wait_time)
+                
+        except Exception as e:
+            print(f"Error in crash animation: {e}")
+    
+    @discord.ui.button(label="💵 Cash Out", style=discord.ButtonStyle.success, custom_id="crash_cashout")
+    async def cashout_button(self, interaction: discord.Interaction, button: Button):
+        """Handle the cash out button click."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your crash game!", ephemeral=True)
+            return
+        
+        if self.cashed_out:
+            await interaction.response.send_message("❌ You already cashed out!", ephemeral=True)
+            return
+        
+        if self.crashed:
+            await interaction.response.send_message("❌ Too late! The game already crashed!", ephemeral=True)
+            return
+        
+        # Cash out successfully
+        self.cashed_out = True
+        
+        # Disable buttons
+        for item in self.children:
+            item.disabled = True
+        
+        # Calculate winnings
+        winnings = int(self.bet_amount * self.current_multiplier)
+        profit = winnings - self.bet_amount
+        
+        # Update user balance (win)
+        user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        balance += profit
+        gambled += self.bet_amount
+        total_gambled += self.bet_amount
+        
+        c.execute(
+            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+            (balance, gambled, total_gambled, self.user_id)
+        )
+        conn.commit()
+        
+        remaining = max(required_gamble - gambled, 0)
+        
+        # Create success embed
+        embed = discord.Embed(
+            title="✅ Cashed Out Successfully!",
+            description=f"You cashed out at **{self.current_multiplier}x** before the crash!",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="💰 Total Winnings", value=f"**{winnings:,}$**", inline=True)
+        embed.add_field(name="📈 Profit", value=f"+{profit:,}$", inline=True)
+        embed.add_field(name="🎲 Multiplier", value=f"{self.current_multiplier}x", inline=True)
+        embed.add_field(name="Balance", value=f"{balance:,}$", inline=True)
+        embed.add_field(name="Remaining Gamble", value=f"{remaining:,}$", inline=True)
+        embed.add_field(name="Crash Point", value=f"Would have crashed at {self.crash_point}x", inline=True)
+        embed.set_footer(text=f"Great timing! • Use !crash <amount> to play again")
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+        # Log activity
+        await log_bet_activity(self.user_id, self.bet_amount, "crash", "win")
+        await log_transaction(
+            self.user_id,
+            "crash_bet",
+            self.bet_amount,
+            balance - profit,
+            balance,
+            f"Crash: Cashed out at {self.current_multiplier}x, WON {profit:,}$"
+        )
+        
+        # Remove from active games
+        if self.user_id in crash_games:
+            del crash_games[self.user_id]
+    
+    async def on_timeout(self):
+        """Called when the view times out."""
+        # If the game is still active, treat it as a crash
+        if not self.cashed_out and not self.crashed:
+            self.crashed = True
+            # Remove from active games
+            if self.user_id in crash_games:
+                del crash_games[self.user_id]
+
+@bot.command(name="crash")
+async def crash(ctx, amount: str = None):
+    """
+    Play the Crash gambling game - cash out before the multiplier crashes!
+    
+    Usage: !crash <amount>
+    Example: !crash 10m
+    
+    How it works:
+    - A multiplier starts at 1.0x and increases steadily
+    - The multiplier will crash at a random point (1.1x to 10x+)
+    - You must cash out before it crashes to win
+    - Your winnings = bet × multiplier at cash out
+    - If you don't cash out before the crash, you lose your bet
+    
+    Strategy: Higher multipliers = higher risk/reward
+    """
+    try:
+        if amount is None:
+            await ctx.send("❌ Usage: `!crash <amount>`\nExample: `!crash 10m`")
+            return
+        
+        # Parse bet amount
+        value = parse_money(amount)
+        if value <= 0:
+            await ctx.send("❌ Invalid amount! Please provide a valid amount.\nExample: `!crash 10m` or `!crash 1000000`")
+            return
+        
+        # Check if user already has an active crash game
+        if ctx.author.id in crash_games:
+            await ctx.send("❌ You already have an active crash game! Finish or wait for it to complete first.")
+            return
+        
+        # Get user data
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        # Check balance
+        if value > balance:
+            await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
+            return
+        
+        # Generate random crash point (weighted towards lower values for house edge)
+        # Using exponential distribution for realistic crash game odds
+        import random
+        rand = random.random()
+        
+        if rand < 0.33:
+            # 33% chance: crash between 1.1x and 2.0x
+            crash_point = round(random.uniform(1.1, 2.0), 2)
+        elif rand < 0.66:
+            # 33% chance: crash between 2.0x and 5.0x
+            crash_point = round(random.uniform(2.0, 5.0), 2)
+        elif rand < 0.90:
+            # 24% chance: crash between 5.0x and 10.0x
+            crash_point = round(random.uniform(5.0, 10.0), 2)
+        else:
+            # 10% chance: crash between 10.0x and 50.0x (rare high multipliers)
+            crash_point = round(random.uniform(10.0, 50.0), 2)
+        
+        # Create initial embed
+        embed = discord.Embed(
+            title="🚀 Crash Game Started!",
+            description="The multiplier is starting to climb! Watch it go up and cash out before it crashes!",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="💰 Bet Amount", value=f"{value:,}$", inline=True)
+        embed.add_field(name="📈 Starting Multiplier", value="1.0x", inline=True)
+        embed.add_field(name="🎯 Status", value="**READY**", inline=True)
+        embed.set_footer(text="Click 'Cash Out' at any time to secure your winnings!")
+        
+        # Create view with crash point
+        view = CrashView(ctx.author.id, value, crash_point, ctx)
+        
+        # Send message
+        message = await ctx.send(embed=embed, view=view)
+        
+        # Store game in active games
+        crash_games[ctx.author.id] = {
+            "bet": value,
+            "crash_point": crash_point,
+            "timestamp": datetime.now(),
+            "message": message
+        }
+        
+        # Start the crash animation
+        await asyncio.sleep(1)  # Brief pause before starting
+        view.task = asyncio.create_task(view.start_crash_animation(message))
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting crash game: {str(e)}")
+
+# -----------------------------
 # 📜 RULES COMMAND
 # -----------------------------
 @bot.command(name="rules")
@@ -1603,6 +1879,22 @@ async def rules(ctx):
                 "  • 1-2500: Ultra risk → 2000x\n"
                 "  • 1-5000: Maximum risk → 4000x\n"
                 "**Note:** Higher ranges = bigger multipliers but lower win chance!\n"
+            ),
+            inline=False
+        )
+        
+        # Crash
+        embed.add_field(
+            name="🚀 Crash",
+            value=(
+                "**Command:** `!crash <amount>`\n"
+                "**Example:** `!crash 10m`\n"
+                "**How to Play:** A multiplier starts at 1.0x and climbs higher. Cash out before it crashes to win!\n"
+                "**Strategy:** The longer you wait, the higher the multiplier - but higher risk of crashing!\n"
+                "**Multiplier Range:** Crashes anywhere from 1.1x to 50x+ (weighted towards lower values)\n"
+                "**Your Winnings:** Bet amount × multiplier when you cash out\n"
+                "**Features:** Click 💵 Cash Out button to secure your winnings at any time!\n"
+                "**Risk:** If you don't cash out before the crash, you lose your entire bet\n"
             ),
             inline=False
         )
