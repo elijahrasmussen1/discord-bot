@@ -661,6 +661,7 @@ async def assist(ctx):
         "**!pick [number]** - Pick your lucky number\n"
         "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
+        "**!blackjack [amount]** - Play Blackjack! Beat the dealer without going over 21\n"
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
         "**!chop** - Take your turn chopping the tree\n"
@@ -2474,6 +2475,429 @@ class GladiatorFightView(View):
         
         return f"{color} `{bar}` {percentage:.0f}%"
 
+# -----------------------------
+# 🎴 BLACKJACK GAMBLING GAME
+# -----------------------------
+
+# Active blackjack games
+active_blackjack = {}
+
+class BlackjackGame:
+    """Blackjack game state tracker"""
+    def __init__(self, user_id, bet_amount, ctx):
+        self.user_id = user_id
+        self.bet_amount = bet_amount
+        self.ctx = ctx
+        self.deck = self.create_deck()
+        random.shuffle(self.deck)
+        self.player_hand = []
+        self.dealer_hand = []
+        self.game_over = False
+        self.player_stood = False
+        
+    def create_deck(self):
+        """Create a standard 52-card deck (can use multiple decks)"""
+        suits = ['♠️', '♥️', '♣️', '♦️']
+        ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
+        deck = []
+        # Use 2 decks for more randomness
+        for _ in range(2):
+            for suit in suits:
+                for rank in ranks:
+                    deck.append(f"{rank}{suit}")
+        return deck
+    
+    def card_value(self, card):
+        """Get numerical value of a card"""
+        rank = card[:-2] if len(card) == 3 else card[:-1]
+        if rank in ['J', 'Q', 'K']:
+            return 10
+        elif rank == 'A':
+            return 11  # Aces are initially 11, adjusted later if needed
+        else:
+            return int(rank)
+    
+    def hand_value(self, hand):
+        """Calculate total value of a hand, adjusting for Aces"""
+        total = sum(self.card_value(card) for card in hand)
+        aces = sum(1 for card in hand if card[0] == 'A')
+        
+        # Adjust for Aces if over 21
+        while total > 21 and aces > 0:
+            total -= 10
+            aces -= 1
+        
+        return total
+    
+    def deal_card(self):
+        """Deal a card from the deck"""
+        if not self.deck:
+            self.deck = self.create_deck()
+            random.shuffle(self.deck)
+        return self.deck.pop()
+    
+    def format_hand(self, hand, hide_first=False):
+        """Format hand for display"""
+        if hide_first:
+            return f"🎴 {' '.join(hand[1:])} (? + {self.hand_value(hand[1:])})"
+        return f"🎴 {' '.join(hand)} ({self.hand_value(hand)})"
+
+class BlackjackView(View):
+    """Interactive buttons for Blackjack game"""
+    def __init__(self, game):
+        super().__init__(timeout=120)
+        self.game = game
+    
+    async def update_game_display(self, interaction: discord.Interaction, result=None):
+        """Update the game display"""
+        dealer_hand_str = self.game.format_hand(
+            self.game.dealer_hand, 
+            hide_first=(not self.game.game_over)
+        )
+        player_hand_str = self.game.format_hand(self.game.player_hand)
+        player_value = self.game.hand_value(self.game.player_hand)
+        
+        if result:
+            # Game over - show results
+            dealer_value = self.game.hand_value(self.game.dealer_hand)
+            
+            if result == "win":
+                color = discord.Color.green()
+                title = "🎉 BLACKJACK - YOU WIN!"
+            elif result == "lose":
+                color = discord.Color.red()
+                title = "💀 BLACKJACK - YOU LOSE!"
+            elif result == "push":
+                color = discord.Color.gold()
+                title = "🤝 BLACKJACK - PUSH!"
+            elif result == "blackjack":
+                color = discord.Color.green()
+                title = "🎰 BLACKJACK! YOU WIN!"
+            
+            embed = discord.Embed(title=title, color=color)
+            embed.add_field(
+                name="🎩 Dealer's Hand",
+                value=f"{' '.join(self.game.dealer_hand)}\n**Total: {dealer_value}**",
+                inline=False
+            )
+            embed.add_field(
+                name="👤 Your Hand",
+                value=f"{' '.join(self.game.player_hand)}\n**Total: {player_value}**",
+                inline=False
+            )
+            
+            if result == "win" or result == "blackjack":
+                payout = self.game.bet_amount * 2 if result == "win" else int(self.game.bet_amount * 2.5)
+                embed.add_field(name="💰 Winnings", value=f"{format_money(payout)}", inline=True)
+            elif result == "push":
+                embed.add_field(name="💰 Returned", value=f"{format_money(self.game.bet_amount)}", inline=True)
+            else:
+                embed.add_field(name="💸 Lost", value=f"{format_money(self.game.bet_amount)}", inline=True)
+            
+            embed.set_footer(text="Play again with !blackjack <amount>")
+            
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+        else:
+            # Game in progress
+            embed = discord.Embed(
+                title="🎴 BLACKJACK",
+                description="Hit to draw a card, Stand to end your turn, or Double Down to double your bet and draw one final card!",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="🎩 Dealer's Hand", value=dealer_hand_str, inline=False)
+            embed.add_field(name="👤 Your Hand", value=player_hand_str, inline=False)
+            embed.add_field(name="💰 Bet", value=format_money(self.game.bet_amount), inline=True)
+            embed.set_footer(text="Make your move!")
+            
+            await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="Hit", style=discord.ButtonStyle.primary, emoji="🎴")
+    async def hit_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.game.user_id:
+            await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+            return
+        
+        # Draw a card
+        self.game.player_hand.append(self.game.deal_card())
+        player_value = self.game.hand_value(self.game.player_hand)
+        
+        if player_value > 21:
+            # Player busts
+            self.game.game_over = True
+            await self.finish_game(interaction, "lose", "You busted!")
+        else:
+            # Update display
+            await self.update_game_display(interaction)
+    
+    @discord.ui.button(label="Stand", style=discord.ButtonStyle.success, emoji="🛑")
+    async def stand_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.game.user_id:
+            await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+            return
+        
+        self.game.player_stood = True
+        await self.dealer_turn(interaction)
+    
+    @discord.ui.button(label="Double Down", style=discord.ButtonStyle.danger, emoji="💰")
+    async def double_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.game.user_id:
+            await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+            return
+        
+        # Check if player has enough balance to double
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.game.user_id)
+        
+        if balance < self.game.bet_amount:
+            await interaction.response.send_message("❌ Insufficient balance to double down!", ephemeral=True)
+            return
+        
+        # Deduct additional bet
+        balance -= self.game.bet_amount
+        c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, self.game.user_id))
+        conn.commit()
+        
+        # Double the bet
+        self.game.bet_amount *= 2
+        
+        # Draw exactly one more card
+        self.game.player_hand.append(self.game.deal_card())
+        player_value = self.game.hand_value(self.game.player_hand)
+        
+        if player_value > 21:
+            # Player busts
+            self.game.game_over = True
+            await self.finish_game(interaction, "lose", "You busted after doubling down!")
+        else:
+            # Automatically stand after double down
+            self.game.player_stood = True
+            await self.dealer_turn(interaction)
+    
+    async def dealer_turn(self, interaction: discord.Interaction):
+        """Dealer draws until 17 or higher"""
+        dealer_value = self.game.hand_value(self.game.dealer_hand)
+        
+        # Dealer must hit on 16 or less, stand on 17 or more
+        while dealer_value < 17:
+            self.game.dealer_hand.append(self.game.deal_card())
+            dealer_value = self.game.hand_value(self.game.dealer_hand)
+        
+        self.game.game_over = True
+        
+        # Determine winner
+        player_value = self.game.hand_value(self.game.player_hand)
+        
+        if dealer_value > 21:
+            # Dealer busts - player wins
+            await self.finish_game(interaction, "win", "Dealer busted!")
+        elif player_value > dealer_value:
+            # Player wins
+            await self.finish_game(interaction, "win", "You have the higher hand!")
+        elif player_value < dealer_value:
+            # Dealer wins
+            await self.finish_game(interaction, "lose", "Dealer has the higher hand!")
+        else:
+            # Push
+            await self.finish_game(interaction, "push", "It's a tie!")
+    
+    async def finish_game(self, interaction: discord.Interaction, result, message):
+        """Finish the game and update database"""
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.game.user_id)
+        
+        if result == "win":
+            winnings = self.game.bet_amount * 2
+            balance += winnings
+            gambled += self.game.bet_amount
+            total_gambled += self.game.bet_amount
+            await log_bet_activity(self.game.user_id, self.game.bet_amount, "blackjack", "win")
+        elif result == "blackjack":
+            winnings = int(self.game.bet_amount * 2.5)
+            balance += winnings
+            gambled += self.game.bet_amount
+            total_gambled += self.game.bet_amount
+            await log_bet_activity(self.game.user_id, self.game.bet_amount, "blackjack", "win")
+        elif result == "push":
+            balance += self.game.bet_amount
+            gambled += self.game.bet_amount
+            total_gambled += self.game.bet_amount
+            await log_bet_activity(self.game.user_id, self.game.bet_amount, "blackjack", "push")
+        else:  # lose
+            gambled += self.game.bet_amount
+            total_gambled += self.game.bet_amount
+            await log_bet_activity(self.game.user_id, self.game.bet_amount, "blackjack", "loss")
+        
+        # Update database
+        c.execute(
+            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+            (balance, gambled, total_gambled, self.game.user_id)
+        )
+        conn.commit()
+        
+        # Remove from active games
+        if self.game.user_id in active_blackjack:
+            del active_blackjack[self.game.user_id]
+        
+        # Show final result
+        await self.update_game_display(interaction, result)
+
+@bot.command(name="blackjack")
+async def blackjack(ctx, amount: str = None):
+    """Play Blackjack! Try to beat the dealer without going over 21!"""
+    try:
+        if amount is None:
+            await ctx.send("❌ Usage: `!blackjack <amount>`\nExample: `!blackjack 10m`")
+            return
+        
+        # Check if user already has an active game
+        if ctx.author.id in active_blackjack:
+            await ctx.send("❌ You already have an active Blackjack game! Finish it first.")
+            return
+        
+        value = parse_money(amount)
+        if value <= 0:
+            await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+            return
+        
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        if value > balance:
+            await ctx.send("❌ You cannot bet more than your balance.")
+            return
+        
+        # Check for rapid betting (fraud detection)
+        is_rapid = await check_rapid_betting(ctx.author.id)
+        if is_rapid:
+            await send_fraud_alert(
+                bot,
+                ctx.author,
+                "Rapid Betting Detected",
+                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Blackjack"
+            )
+        
+        # Check for high bet (fraud detection)
+        if value >= HIGH_BET_THRESHOLD:
+            await log_user_activity(
+                bot,
+                ctx.author,
+                "High Value Bet",
+                f"Amount: {value:,}$\nGame: Blackjack\nBalance: {balance:,}$"
+            )
+        
+        # Deduct bet from balance
+        balance -= value
+        c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, ctx.author.id))
+        conn.commit()
+        
+        # Create game
+        game = BlackjackGame(ctx.author.id, value, ctx)
+        active_blackjack[ctx.author.id] = game
+        
+        # Deal initial cards
+        game.player_hand.append(game.deal_card())
+        game.dealer_hand.append(game.deal_card())
+        game.player_hand.append(game.deal_card())
+        game.dealer_hand.append(game.deal_card())
+        
+        # Check for immediate Blackjack
+        player_value = game.hand_value(game.player_hand)
+        dealer_value = game.hand_value(game.dealer_hand)
+        
+        if player_value == 21 and len(game.player_hand) == 2:
+            # Player has Blackjack!
+            if dealer_value == 21 and len(game.dealer_hand) == 2:
+                # Both have Blackjack - Push
+                game.game_over = True
+                balance += value
+                gambled += value
+                total_gambled += value
+                c.execute(
+                    "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                    (balance, gambled, total_gambled, ctx.author.id)
+                )
+                conn.commit()
+                await log_bet_activity(ctx.author.id, value, "blackjack", "push")
+                
+                embed = discord.Embed(
+                    title="🤝 BOTH BLACKJACK - PUSH!",
+                    description="Both you and the dealer have Blackjack!",
+                    color=discord.Color.gold()
+                )
+                embed.add_field(
+                    name="🎩 Dealer's Hand",
+                    value=f"{' '.join(game.dealer_hand)}\n**Total: 21**",
+                    inline=False
+                )
+                embed.add_field(
+                    name="👤 Your Hand",
+                    value=f"{' '.join(game.player_hand)}\n**Total: 21**",
+                    inline=False
+                )
+                embed.add_field(name="💰 Returned", value=format_money(value), inline=True)
+                embed.set_footer(text="Play again with !blackjack <amount>")
+                
+                del active_blackjack[ctx.author.id]
+                await ctx.send(embed=embed)
+            else:
+                # Player has Blackjack, dealer doesn't - Player wins 2.5x
+                game.game_over = True
+                winnings = int(value * 2.5)
+                balance += winnings
+                gambled += value
+                total_gambled += value
+                c.execute(
+                    "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                    (balance, gambled, total_gambled, ctx.author.id)
+                )
+                conn.commit()
+                await log_bet_activity(ctx.author.id, value, "blackjack", "win")
+                
+                embed = discord.Embed(
+                    title="🎰 BLACKJACK! YOU WIN!",
+                    description="You got Blackjack! You win 2.5x your bet!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(
+                    name="🎩 Dealer's Hand",
+                    value=f"{' '.join(game.dealer_hand)}\n**Total: {dealer_value}**",
+                    inline=False
+                )
+                embed.add_field(
+                    name="👤 Your Hand",
+                    value=f"{' '.join(game.player_hand)}\n**Total: 21 (BLACKJACK!)**",
+                    inline=False
+                )
+                embed.add_field(name="💰 Winnings", value=format_money(winnings), inline=True)
+                embed.set_footer(text="Play again with !blackjack <amount>")
+                
+                del active_blackjack[ctx.author.id]
+                await ctx.send(embed=embed)
+        else:
+            # Normal game - show initial state with buttons
+            view = BlackjackView(game)
+            
+            dealer_hand_str = game.format_hand(game.dealer_hand, hide_first=True)
+            player_hand_str = game.format_hand(game.player_hand)
+            
+            embed = discord.Embed(
+                title="🎴 BLACKJACK",
+                description="Hit to draw a card, Stand to end your turn, or Double Down to double your bet and draw one final card!",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="🎩 Dealer's Hand", value=dealer_hand_str, inline=False)
+            embed.add_field(name="👤 Your Hand", value=player_hand_str, inline=False)
+            embed.add_field(name="💰 Bet", value=format_money(value), inline=True)
+            embed.set_footer(text="Make your move!")
+            
+            await ctx.send(embed=embed, view=view)
+    
+    except Exception as e:
+        if ctx.author.id in active_blackjack:
+            del active_blackjack[ctx.author.id]
+        await ctx.send(f"❌ Error starting Blackjack: {str(e)}")
+
 @bot.command(name="fight")
 async def fight(ctx, opponent: discord.Member, amount: str):
     """
@@ -3104,11 +3528,72 @@ class GamesView(discord.ui.View):
             value="If you don't cash out before the crash, you lose your entire bet",
             inline=False
         )
-        embed4.set_footer(text="Page 4/7 • Use the buttons below to see other games")
+        embed4.set_footer(text="Page 4/8 • Use the buttons below to see other games")
         pages.append(embed4)
         
-        # Page 5: Gladiator Fights
+        # Page 5: Blackjack
         embed5 = discord.Embed(
+            title="🎴 Blackjack",
+            description="**Classic casino card game - Beat the dealer without going over 21!**",
+            color=discord.Color.dark_red()
+        )
+        embed5.add_field(
+            name="📋 Command",
+            value="`!blackjack <amount>`",
+            inline=False
+        )
+        embed5.add_field(
+            name="💡 Example",
+            value="`!blackjack 15m`",
+            inline=False
+        )
+        embed5.add_field(
+            name="🎮 How to Play",
+            value="Try to get as close to 21 as possible without going over! Beat the dealer's hand to win.",
+            inline=False
+        )
+        embed5.add_field(
+            name="🃏 Card Values",
+            value=(
+                "• **Number cards:** Face value (2-10)\n"
+                "• **Face cards** (J, Q, K): Worth 10\n"
+                "• **Aces:** Worth 11 or 1 (automatically adjusted)"
+            ),
+            inline=False
+        )
+        embed5.add_field(
+            name="🎯 Actions",
+            value=(
+                "• **Hit:** Draw another card\n"
+                "• **Stand:** End your turn and let dealer play\n"
+                "• **Double Down:** Double your bet and draw one final card"
+            ),
+            inline=False
+        )
+        embed5.add_field(
+            name="💰 Payouts",
+            value=(
+                "• **Win:** 2x your bet\n"
+                "• **Blackjack** (21 with 2 cards): 2.5x your bet\n"
+                "• **Push** (tie): Get your bet back"
+            ),
+            inline=False
+        )
+        embed5.add_field(
+            name="📜 Dealer Rules",
+            value="Dealer must hit on 16 or less, stand on 17 or more",
+            inline=False
+        )
+        embed5.add_field(
+            name="✨ Features",
+            value="Professional embeds, interactive buttons, real-time gameplay!",
+            inline=False
+        )
+        embed5.set_footer(text="Page 5/8 • Use the buttons below to see other games")
+        pages.append(embed5)
+        
+        # Page 6: Gladiator Fights
+        embed6 = discord.Embed(
             title="⚔️ Gladiator Fights",
             description="**Epic PvP battles with 8 unique gladiators**",
             color=discord.Color.orange()
@@ -3155,11 +3640,11 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed5.set_footer(text="Page 5/7 • Use the buttons below to see other games")
-        pages.append(embed5)
+        embed6.set_footer(text="Page 6/8 • Use the buttons below to see other games")
+        pages.append(embed6)
         
-        # Page 6: Risky Lumberjack
-        embed6 = discord.Embed(
+        # Page 7: Risky Lumberjack
+        embed7 = discord.Embed(
             title="🪓 Risky Lumberjack",
             description="**Turn-based tree cutting game - don't make it fall!**",
             color=discord.Color.dark_green()
@@ -3206,11 +3691,11 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed6.set_footer(text="Page 6/7 • Use the buttons below to see other games")
-        pages.append(embed6)
+        embed7.set_footer(text="Page 7/8 • Use the buttons below to see other games")
+        pages.append(embed7)
         
-        # Page 7: General Rules
-        embed7 = discord.Embed(
+        # Page 8: General Rules
+        embed8 = discord.Embed(
             title="📋 General Rules",
             description="**Important information about the gambling system**",
             color=discord.Color.red()
@@ -3245,8 +3730,8 @@ class GamesView(discord.ui.View):
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed7.set_footer(text="Page 7/7 • Use the buttons below to see other games")
-        pages.append(embed7)
+        embed8.set_footer(text="Page 8/8 • Use the buttons below to see other games")
+        pages.append(embed8)
         
         return pages
     
