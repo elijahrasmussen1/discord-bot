@@ -678,6 +678,7 @@ async def assist(ctx):
         "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!blackjack [amount]** - Play Blackjack! Beat the dealer without going over 21\n"
+        "**!limbo [amount]** - Play Limbo! Above or below 50?\n"
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
         "**!chop** - Take your turn chopping the tree\n"
@@ -3852,6 +3853,244 @@ async def handle_word_chain_loss(ctx, game_data, loser_id, reason):
     await ctx.send(embed=embed)
 
 # -----------------------------
+# 🎰 LIMBO GAME
+# -----------------------------
+limbo_games = {}  # {user_id: {"bet": int, "message_id": int, "channel_id": int}}
+
+class LimboView(discord.ui.View):
+    """View for Limbo game buttons."""
+    
+    def __init__(self, user_id, bet_amount):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.bet_amount = bet_amount
+    
+    @discord.ui.button(label="⬆️ Above 50", style=discord.ButtonStyle.green, custom_id="limbo_above")
+    async def above_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle Above 50 button click."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This isn't your game!", ephemeral=True)
+            return
+        
+        await interaction.response.defer()
+        await self.resolve_limbo(interaction, "above")
+    
+    @discord.ui.button(label="⬇️ Below 50", style=discord.ButtonStyle.red, custom_id="limbo_below")
+    async def below_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Handle Below 50 button click."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This isn't your game!", ephemeral=True)
+            return
+        
+        await interaction.response.defer()
+        await self.resolve_limbo(interaction, "below")
+    
+    async def resolve_limbo(self, interaction, choice):
+        """Resolve the Limbo game."""
+        try:
+            # Clean up game tracking
+            if self.user_id in limbo_games:
+                del limbo_games[self.user_id]
+            
+            # Disable buttons
+            for item in self.children:
+                item.disabled = True
+            
+            # Generate random number between 1-100
+            roll = random.randint(1, 100)
+            
+            # Determine if player wins
+            if choice == "above":
+                player_wins = roll > 50
+                choice_text = "⬆️ **Above 50**"
+            else:  # below
+                player_wins = roll < 50
+                choice_text = "⬇️ **Below 50**"
+            
+            # Calculate payout multiplier based on bet amount
+            # Higher bets get slightly better multipliers (casino-style)
+            # But keep house edge around 5-10%
+            if self.bet_amount >= 100_000_000:  # 100M+
+                base_multiplier = 1.90
+            elif self.bet_amount >= 50_000_000:  # 50M+
+                base_multiplier = 1.88
+            elif self.bet_amount >= 25_000_000:  # 25M+
+                base_multiplier = 1.86
+            elif self.bet_amount >= 10_000_000:  # 10M+
+                base_multiplier = 1.84
+            else:  # Under 10M
+                base_multiplier = 1.82
+            
+            if player_wins:
+                # Player wins!
+                winnings = int(self.bet_amount * base_multiplier)
+                profit = winnings - self.bet_amount
+                
+                # Update balance
+                c.execute("UPDATE users SET balance = balance + ?, gambled = gambled + ?, total_gambled = total_gambled + ? WHERE user_id = ?", 
+                         (profit, self.bet_amount, self.bet_amount, self.user_id))
+                conn.commit()
+                
+                # Log transaction
+                log_transaction(self.user_id, "limbo_win", winnings, 0, 0, f"Won Limbo game - rolled {roll}, chose {choice}")
+                await log_bet_activity(self.user_id, self.bet_amount, "limbo", "win")
+                
+                # Create win embed
+                embed = discord.Embed(
+                    title="🎉 LIMBO - YOU WIN!",
+                    description=f"The number was **{roll}**!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(
+                    name="🎲 Your Choice",
+                    value=choice_text,
+                    inline=True
+                )
+                embed.add_field(
+                    name="🎯 Result",
+                    value=f"**{roll}**",
+                    inline=True
+                )
+                embed.add_field(
+                    name="💰 Winnings",
+                    value=f"{format_money(winnings)} ({base_multiplier}x)",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📈 Profit",
+                    value=f"+{format_money(profit)}",
+                    inline=True
+                )
+                embed.set_footer(text=f"Bet: {format_money(self.bet_amount)} • Multiplier: {base_multiplier}x")
+                
+            else:
+                # Player loses
+                # Update balance
+                c.execute("UPDATE users SET balance = balance - ?, gambled = gambled + ?, total_gambled = total_gambled + ? WHERE user_id = ?", 
+                         (self.bet_amount, self.bet_amount, self.bet_amount, self.user_id))
+                conn.commit()
+                
+                # Log transaction
+                log_transaction(self.user_id, "limbo_loss", self.bet_amount, 0, 0, f"Lost Limbo game - rolled {roll}, chose {choice}")
+                await log_bet_activity(self.user_id, self.bet_amount, "limbo", "loss")
+                
+                # Create loss embed
+                embed = discord.Embed(
+                    title="💀 LIMBO - YOU LOSE",
+                    description=f"The number was **{roll}**!",
+                    color=discord.Color.red()
+                )
+                embed.add_field(
+                    name="🎲 Your Choice",
+                    value=choice_text,
+                    inline=True
+                )
+                embed.add_field(
+                    name="🎯 Result",
+                    value=f"**{roll}**",
+                    inline=True
+                )
+                embed.add_field(
+                    name="💸 Lost",
+                    value=format_money(self.bet_amount),
+                    inline=False
+                )
+                embed.set_footer(text=f"Better luck next time! • Try again with !limbo <amount>")
+            
+            await interaction.edit_original_response(embed=embed, view=self)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ Error resolving Limbo game: {str(e)}", ephemeral=True)
+
+@bot.command(name="limbo")
+async def limbo(ctx, amount: str):
+    """
+    Play Limbo! Will the number be above or below 50?
+    
+    Usage: !limbo <amount>
+    Example: !limbo 10m
+    
+    Higher bets = higher multipliers!
+    """
+    try:
+        # Check if user already has an active game
+        if ctx.author.id in limbo_games:
+            await ctx.send("❌ You already have an active Limbo game! Finish it first.")
+            return
+        
+        # Parse bet amount
+        bet_amount = parse_amount(amount)
+        if bet_amount < 1_000_000:
+            await ctx.send("❌ Minimum bet is 1M!")
+            return
+        
+        # Check user balance
+        c.execute("SELECT balance FROM users WHERE user_id = ?", (ctx.author.id,))
+        result = c.fetchone()
+        
+        if not result or result[0] < bet_amount:
+            await ctx.send("❌ Insufficient balance!")
+            return
+        
+        # Determine multiplier for display
+        if bet_amount >= 100_000_000:
+            multiplier = 1.90
+        elif bet_amount >= 50_000_000:
+            multiplier = 1.88
+        elif bet_amount >= 25_000_000:
+            multiplier = 1.86
+        elif bet_amount >= 10_000_000:
+            multiplier = 1.84
+        else:
+            multiplier = 1.82
+        
+        # Create game embed
+        embed = discord.Embed(
+            title="🎰 LIMBO",
+            description="Will the number be **Above** or **Below** 50?",
+            color=discord.Color.purple()
+        )
+        embed.add_field(
+            name="💰 Your Bet",
+            value=format_money(bet_amount),
+            inline=True
+        )
+        embed.add_field(
+            name="📊 Multiplier",
+            value=f"**{multiplier}x**",
+            inline=True
+        )
+        embed.add_field(
+            name="🎯 Potential Win",
+            value=format_money(int(bet_amount * multiplier)),
+            inline=False
+        )
+        embed.add_field(
+            name="🎲 Choose Your Bet",
+            value="Click ⬆️ **Above 50** or ⬇️ **Below 50**",
+            inline=False
+        )
+        embed.set_footer(text="Higher bets = higher multipliers! • 60 second timeout")
+        
+        # Create view
+        view = LimboView(ctx.author.id, bet_amount)
+        
+        # Send message
+        message = await ctx.send(embed=embed, view=view)
+        
+        # Track active game
+        limbo_games[ctx.author.id] = {
+            "bet": bet_amount,
+            "message_id": message.id,
+            "channel_id": ctx.channel.id
+        }
+        
+    except ValueError:
+        await ctx.send("❌ Invalid amount! Use formats like: 1m, 500k, 1000000")
+    except Exception as e:
+        await ctx.send(f"❌ Error starting Limbo: {str(e)}")
+
+# -----------------------------
 # 📜 RULES COMMAND
 # -----------------------------
 # Games Pagination View
@@ -3904,7 +4143,7 @@ class GamesView(discord.ui.View):
             value="Losing ANY round means you lose ALL winnings! Bank wisely.",
             inline=False
         )
-        embed1.set_footer(text="Page 1/7 • Use the buttons below to see other games")
+        embed1.set_footer(text="Page 1/10 • Use the buttons below to see other games")
         pages.append(embed1)
         
         # Page 2: Slots
@@ -3946,7 +4185,7 @@ class GamesView(discord.ui.View):
             value="Click 🔄 **Spin Again** to replay with same bet!",
             inline=False
         )
-        embed2.set_footer(text="Page 2/7 • Use the buttons below to see other games")
+        embed2.set_footer(text="Page 2/10 • Use the buttons below to see other games")
         pages.append(embed2)
         
         # Page 3: Lucky Number
@@ -3991,7 +4230,7 @@ class GamesView(discord.ui.View):
             value="Higher ranges = bigger multipliers but lower win chance!",
             inline=False
         )
-        embed3.set_footer(text="Page 3/7 • Use the buttons below to see other games")
+        embed3.set_footer(text="Page 3/10 • Use the buttons below to see other games")
         pages.append(embed3)
         
         # Page 4: Crash
@@ -4046,7 +4285,7 @@ class GamesView(discord.ui.View):
             value="If you don't cash out before the crash, you lose your entire bet",
             inline=False
         )
-        embed4.set_footer(text="Page 4/8 • Use the buttons below to see other games")
+        embed4.set_footer(text="Page 4/10 • Use the buttons below to see other games")
         pages.append(embed4)
         
         # Page 5: Blackjack
@@ -4107,7 +4346,7 @@ class GamesView(discord.ui.View):
             value="Professional embeds, interactive buttons, real-time gameplay!",
             inline=False
         )
-        embed5.set_footer(text="Page 5/8 • Use the buttons below to see other games")
+        embed5.set_footer(text="Page 5/10 • Use the buttons below to see other games")
         pages.append(embed5)
         
         # Page 6: Gladiator Fights
@@ -4158,7 +4397,7 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed6.set_footer(text="Page 6/8 • Use the buttons below to see other games")
+        embed6.set_footer(text="Page 6/10 • Use the buttons below to see other games")
         pages.append(embed6)
         
         # Page 7: Risky Lumberjack
@@ -4209,7 +4448,7 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed7.set_footer(text="Page 7/8 • Use the buttons below to see other games")
+        embed7.set_footer(text="Page 7/10 • Use the buttons below to see other games")
         pages.append(embed7)
         
         # Page 8: Word Chain
@@ -4248,47 +4487,97 @@ class GamesView(discord.ui.View):
             value="• Only letters allowed in words\n• 30-second time limit per turn\n• Play must continue in the same channel\n• Case doesn't matter",
             inline=False
         )
-        embed8.set_footer(text="Page 8/9 • Use the buttons below to see other games")
+        embed8.set_footer(text="Page 8/10 • Use the buttons below to see other games")
         pages.append(embed8)
         
-        # Page 9: General Rules
+        # Page 9: Limbo
         embed9 = discord.Embed(
+            title="🎰 Limbo",
+            description="**Will the number be above or below 50? Higher bets = higher multipliers!**",
+            color=discord.Color.purple()
+        )
+        embed9.add_field(
+            name="📋 Command",
+            value="`!limbo <amount>`",
+            inline=False
+        )
+        embed9.add_field(
+            name="💡 Example",
+            value="`!limbo 25m`",
+            inline=False
+        )
+        embed9.add_field(
+            name="🎮 How to Play",
+            value="1. Bet an amount to start\n2. A random number between 1-100 is generated\n3. Choose **Above 50** or **Below 50**\n4. If you're correct, you win!\n5. Wrong guess = lose your bet",
+            inline=False
+        )
+        embed9.add_field(
+            name="💰 Multipliers (Bet-Based)",
+            value=(
+                "• **Under 10M:** 1.82x\n"
+                "• **10M+:** 1.84x\n"
+                "• **25M+:** 1.86x\n"
+                "• **50M+:** 1.88x\n"
+                "• **100M+:** 1.90x"
+            ),
+            inline=False
+        )
+        embed9.add_field(
+            name="🎯 Strategy",
+            value="Higher bets give better multipliers! But remember - house always has a slight edge.",
+            inline=False
+        )
+        embed9.add_field(
+            name="✨ Features",
+            value="• Simple and fast gameplay\n• Interactive button interface\n• Bet-scaled multipliers\n• Casino-style odds",
+            inline=False
+        )
+        embed9.add_field(
+            name="⚠️ Note",
+            value="50 is neither above nor below - rolling exactly 50 counts as a loss for both choices!",
+            inline=False
+        )
+        embed9.set_footer(text="Page 9/10 • Use the buttons below to see other games")
+        pages.append(embed9)
+        
+        # Page 10: General Rules
+        embed10 = discord.Embed(
             title="📋 General Rules",
             description="**Important information about the gambling system**",
             color=discord.Color.red()
         )
-        embed9.add_field(
+        embed10.add_field(
             name="💵 Deposit Requirement",
             value="Minimum **10M** deposit required",
             inline=False
         )
-        embed9.add_field(
+        embed10.add_field(
             name="🎲 Gambling Requirement",
             value="Must gamble **30%** of your balance before withdrawing",
             inline=False
         )
-        embed9.add_field(
+        embed10.add_field(
             name="⚡ Balance Updates",
             value="All wins/losses update your balance instantly",
             inline=False
         )
-        embed9.add_field(
+        embed10.add_field(
             name="🛡️ Fraud Detection",
             value="Rapid betting and high-value bets are monitored",
             inline=False
         )
-        embed9.add_field(
+        embed10.add_field(
             name="💸 Withdrawals",
             value="Use `!withdraw` when you meet the gambling requirement",
             inline=False
         )
-        embed9.add_field(
+        embed10.add_field(
             name="ℹ️ More Commands",
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed9.set_footer(text="Page 9/9 • Use the buttons below to see other games")
-        pages.append(embed9)
+        embed10.set_footer(text="Page 10/10 • Use the buttons below to see other games")
+        pages.append(embed10)
         
         return pages
     
