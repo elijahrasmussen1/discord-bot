@@ -681,6 +681,8 @@ async def assist(ctx):
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
         "**!chop** - Take your turn chopping the tree\n"
+        "**!wordchain @user [amount]** - Challenge a player to word chain!\n"
+        "**!word [your_word]** - Play your word in the chain\n"
         "**!games** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
@@ -3273,6 +3275,7 @@ async def pick_gladiator(ctx, *, gladiator_name: str):
 # -----------------------------
 # Active lumberjack games storage
 lumberjack_games = {}
+word_chain_games = {}
 
 @bot.command(name="choptree")
 async def choptree(ctx, opponent: discord.Member, amount: str):
@@ -3547,6 +3550,306 @@ async def chop(ctx):
         
     except Exception as e:
         await ctx.send(f"❌ Error during chop: {str(e)}")
+
+# -----------------------------
+# 🔤 WORD CHAIN GAME
+# -----------------------------
+
+@bot.command(name="wordchain")
+async def wordchain(ctx, opponent: discord.Member, amount: str):
+    """
+    Challenge another player to Word Chain!
+    
+    Usage: !wordchain @user <amount>
+    Example: !wordchain @John 25m
+    
+    Take turns saying words that start with the last letter of the previous word.
+    30 seconds per turn. Repeats or timeouts = loss!
+    """
+    try:
+        # Validate opponent
+        if opponent.bot or opponent.id == ctx.author.id:
+            return await ctx.send("❌ Cannot challenge bots or yourself!")
+        
+        # Parse bet amount
+        bet_amount = parse_money(amount)
+        if bet_amount < 10_000_000:
+            return await ctx.send("❌ Minimum bet is 10M!")
+        
+        # Check if users already in a game
+        if ctx.author.id in word_chain_games or opponent.id in word_chain_games:
+            return await ctx.send("❌ One of you is already in a word chain game!")
+        
+        # Validate balances
+        challenger_data = c.execute("SELECT balance FROM users WHERE user_id = ?", (ctx.author.id,)).fetchone()
+        opponent_data = c.execute("SELECT balance FROM users WHERE user_id = ?", (opponent.id,)).fetchone()
+        
+        if not challenger_data or challenger_data[0] < bet_amount:
+            return await ctx.send(f"❌ You need at least {format_money(bet_amount)} to play!")
+        
+        if not opponent_data or opponent_data[0] < bet_amount:
+            return await ctx.send(f"❌ {opponent.mention} doesn't have enough balance!")
+        
+        # Create challenge embed
+        embed = discord.Embed(
+            title="🔤 Word Chain Challenge!",
+            description=f"{ctx.author.mention} has challenged {opponent.mention} to a word chain battle!",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="💰 Bet Amount", value=f"{format_money(bet_amount)} each", inline=True)
+        embed.add_field(name="🏆 Prize", value=f"{format_money(bet_amount * 2)}", inline=True)
+        embed.add_field(
+            name="🎮 How to Play",
+            value=(
+                "Take turns using `!word <your_word>` to continue the chain!\n"
+                "• Each word must start with the last letter of the previous word\n"
+                "• You have **30 seconds** per turn\n"
+                "• No repeating words!\n"
+                "• Timeout or invalid word = you lose!"
+            ),
+            inline=False
+        )
+        embed.add_field(
+            name="📝 Example",
+            value="Apple → **E**lephant → **T**urtle → **E**agle",
+            inline=False
+        )
+        
+        # Create accept/decline view
+        view = WordChainChallengeView(ctx.author, opponent, bet_amount)
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting word chain game: {str(e)}")
+
+class WordChainChallengeView(discord.ui.View):
+    """View for accepting/declining word chain challenge."""
+    
+    def __init__(self, challenger, opponent, bet_amount):
+        super().__init__(timeout=60)
+        self.challenger = challenger
+        self.opponent = opponent
+        self.bet_amount = bet_amount
+        
+    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.green)
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Accept the challenge."""
+        if interaction.user.id != self.opponent.id:
+            return await interaction.response.send_message("❌ This challenge isn't for you!", ephemeral=True)
+        
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        
+        # Initialize game
+        game_data = {
+            "player1": self.challenger.id,
+            "player2": self.opponent.id,
+            "bet": self.bet_amount,
+            "current_turn": self.challenger.id,
+            "last_word": None,
+            "used_words": set(),
+            "turns_taken": 0,
+            "channel_id": interaction.channel.id,
+            "turn_start_time": datetime.utcnow()
+        }
+        
+        word_chain_games[self.challenger.id] = game_data
+        word_chain_games[self.opponent.id] = game_data
+        
+        # Show game started
+        embed = discord.Embed(
+            title="🔤 WORD CHAIN",
+            description=f"The word chain begins! {self.challenger.mention}, start us off!",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="⏰ Time Limit", value="30 seconds per turn", inline=True)
+        embed.add_field(name="💰 Prize Pool", value=format_money(self.bet_amount * 2), inline=True)
+        embed.add_field(
+            name="⏳ Current Turn",
+            value=f"<@{self.challenger.id}>",
+            inline=False
+        )
+        embed.add_field(
+            name="📝 Instructions",
+            value="Use `!word <your_word>` to play your word. It can be any word to start!",
+            inline=False
+        )
+        embed.set_footer(text="Turns: 0 • No repeats allowed!")
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+    @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.red)
+    async def decline_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Decline the challenge."""
+        if interaction.user.id != self.opponent.id:
+            return await interaction.response.send_message("❌ This challenge isn't for you!", ephemeral=True)
+        
+        embed = discord.Embed(
+            title="❌ Challenge Declined",
+            description=f"{self.opponent.mention} declined the word chain challenge.",
+            color=discord.Color.red()
+        )
+        
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+@bot.command(name="word")
+async def word(ctx, user_word: str = None):
+    """
+    Play your word in the word chain!
+    
+    Usage: !word <your_word>
+    Example: !word elephant
+    
+    Your word must start with the last letter of the previous word!
+    """
+    try:
+        # Check if word was provided
+        if not user_word:
+            return await ctx.send("❌ Please provide a word! Usage: `!word <your_word>`")
+        
+        # Clean and validate word
+        user_word = user_word.lower().strip()
+        if not user_word.isalpha():
+            return await ctx.send("❌ Word must contain only letters!")
+        
+        # Check if user is in a game
+        if ctx.author.id not in word_chain_games:
+            return await ctx.send("❌ You're not in a word chain game! Use `!wordchain @user <amount>` to start one.")
+        
+        game_data = word_chain_games[ctx.author.id]
+        
+        # Check if it's user's turn
+        if game_data["current_turn"] != ctx.author.id:
+            other_player = game_data["player1"] if game_data["current_turn"] == game_data["player1"] else game_data["player2"]
+            return await ctx.send(f"❌ It's <@{other_player}>'s turn!")
+        
+        # Check if in correct channel
+        if game_data["channel_id"] != ctx.channel.id:
+            return await ctx.send("❌ You must play in the channel where the game started!")
+        
+        # Check timeout (30 seconds)
+        time_elapsed = (datetime.utcnow() - game_data["turn_start_time"]).total_seconds()
+        if time_elapsed > 30:
+            # Timeout - current player loses
+            await handle_word_chain_loss(ctx, game_data, ctx.author.id, "⏰ Time's up!")
+            return
+        
+        # Check if word was already used
+        if user_word in game_data["used_words"]:
+            await handle_word_chain_loss(ctx, game_data, ctx.author.id, f"❌ '{user_word}' was already used!")
+            return
+        
+        # Check if word starts with correct letter
+        if game_data["last_word"]:
+            required_letter = game_data["last_word"][-1]
+            if user_word[0] != required_letter:
+                await handle_word_chain_loss(ctx, game_data, ctx.author.id, 
+                    f"❌ Word must start with '{required_letter.upper()}'!")
+                return
+        
+        # Valid word! Update game state
+        game_data["last_word"] = user_word
+        game_data["used_words"].add(user_word)
+        game_data["turns_taken"] += 1
+        game_data["current_turn"] = game_data["player2"] if game_data["current_turn"] == game_data["player1"] else game_data["player1"]
+        game_data["turn_start_time"] = datetime.utcnow()
+        
+        next_letter = user_word[-1].upper()
+        
+        # Create update embed
+        embed = discord.Embed(
+            title="🔤 WORD CHAIN",
+            description=f"✅ {ctx.author.mention} played: **{user_word.upper()}**",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="⏳ Next Turn",
+            value=f"<@{game_data['current_turn']}>",
+            inline=True
+        )
+        embed.add_field(
+            name="🔤 Next Letter",
+            value=f"Word must start with **{next_letter}**",
+            inline=True
+        )
+        embed.add_field(
+            name="💰 Prize Pool",
+            value=format_money(game_data["bet"] * 2),
+            inline=True
+        )
+        embed.add_field(
+            name="📝 Word Chain",
+            value=" → ".join([w.capitalize() for w in list(game_data["used_words"])[-5:]]),
+            inline=False
+        )
+        embed.set_footer(text=f"Turns: {game_data['turns_taken']} • 30 seconds per turn • No repeats!")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error playing word: {str(e)}")
+
+async def handle_word_chain_loss(ctx, game_data, loser_id, reason):
+    """Handle word chain game loss."""
+    winner_id = game_data["player1"] if loser_id == game_data["player2"] else game_data["player2"]
+    
+    # Update balances
+    c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (game_data["bet"], loser_id))
+    c.execute("UPDATE users SET balance = balance + ?, total_gambled = total_gambled + ? WHERE user_id = ?", 
+             (game_data["bet"], game_data["bet"], winner_id))
+    conn.commit()
+    
+    # Log transactions
+    log_transaction(loser_id, "wordchain_loss", game_data["bet"], 0, 0, f"Lost word chain game vs user {winner_id}")
+    log_transaction(winner_id, "wordchain_win", game_data["bet"], 0, 0, f"Won word chain game vs user {loser_id}")
+    await log_bet_activity(winner_id, game_data["bet"], "wordchain", "win")
+    await log_bet_activity(loser_id, game_data["bet"], "wordchain", "loss")
+    
+    # Victory embed
+    embed = discord.Embed(
+        title="🏆 WORD CHAIN COMPLETE!",
+        description=reason,
+        color=discord.Color.gold()
+    )
+    embed.add_field(
+        name="🏆 Winner",
+        value=f"<@{winner_id}>",
+        inline=True
+    )
+    embed.add_field(
+        name="💔 Loser",
+        value=f"<@{loser_id}>",
+        inline=True
+    )
+    embed.add_field(
+        name="💰 Winnings",
+        value=format_money(game_data["bet"] * 2),
+        inline=False
+    )
+    embed.add_field(
+        name="📊 Game Stats",
+        value=f"Total Turns: {game_data['turns_taken']}\nWords Used: {len(game_data['used_words'])}",
+        inline=False
+    )
+    if game_data["used_words"]:
+        word_list = " → ".join([w.capitalize() for w in list(game_data["used_words"])])
+        embed.add_field(
+            name="📝 Complete Chain",
+            value=word_list[:1024],  # Discord field limit
+            inline=False
+        )
+    embed.set_footer(text=f"Game lasted {game_data['turns_taken']} turns")
+    
+    # Clean up game
+    del word_chain_games[game_data["player1"]]
+    del word_chain_games[game_data["player2"]]
+    
+    await ctx.send(embed=embed)
 
 # -----------------------------
 # 📜 RULES COMMAND
@@ -3909,44 +4212,83 @@ class GamesView(discord.ui.View):
         embed7.set_footer(text="Page 7/8 • Use the buttons below to see other games")
         pages.append(embed7)
         
-        # Page 8: General Rules
+        # Page 8: Word Chain
         embed8 = discord.Embed(
+            title="🔤 Word Chain",
+            description="**Turn-based word game - Chain words by matching letters!**",
+            color=discord.Color.blue()
+        )
+        embed8.add_field(
+            name="📋 Commands",
+            value="`!wordchain @user <amount>` - Start game\n`!word <your_word>` - Play word",
+            inline=False
+        )
+        embed8.add_field(
+            name="💡 Example",
+            value="`!wordchain @John 25m`\n`!word elephant`",
+            inline=False
+        )
+        embed8.add_field(
+            name="🎮 How to Play",
+            value="1. Challenge an opponent with `!wordchain`\n2. Opponent must accept\n3. Take turns with `!word <word>`\n4. Each word must start with the last letter of the previous word\n5. **30 seconds per turn** - timeout = loss!\n6. No repeating words!",
+            inline=False
+        )
+        embed8.add_field(
+            name="📝 Example Chain",
+            value="Apple → Elephant → Tiger → Raccoon → Nest",
+            inline=False
+        )
+        embed8.add_field(
+            name="💰 Winner Takes All",
+            value="First player to repeat a word, timeout, or give invalid word loses. Winner gets 2x the bet!",
+            inline=False
+        )
+        embed8.add_field(
+            name="⚠️ Important",
+            value="• Only letters allowed in words\n• 30-second time limit per turn\n• Play must continue in the same channel\n• Case doesn't matter",
+            inline=False
+        )
+        embed8.set_footer(text="Page 8/9 • Use the buttons below to see other games")
+        pages.append(embed8)
+        
+        # Page 9: General Rules
+        embed9 = discord.Embed(
             title="📋 General Rules",
             description="**Important information about the gambling system**",
             color=discord.Color.red()
         )
-        embed8.add_field(
+        embed9.add_field(
             name="💵 Deposit Requirement",
             value="Minimum **10M** deposit required",
             inline=False
         )
-        embed8.add_field(
+        embed9.add_field(
             name="🎲 Gambling Requirement",
             value="Must gamble **30%** of your balance before withdrawing",
             inline=False
         )
-        embed8.add_field(
+        embed9.add_field(
             name="⚡ Balance Updates",
             value="All wins/losses update your balance instantly",
             inline=False
         )
-        embed8.add_field(
+        embed9.add_field(
             name="🛡️ Fraud Detection",
             value="Rapid betting and high-value bets are monitored",
             inline=False
         )
-        embed8.add_field(
+        embed9.add_field(
             name="💸 Withdrawals",
             value="Use `!withdraw` when you meet the gambling requirement",
             inline=False
         )
-        embed8.add_field(
+        embed9.add_field(
             name="ℹ️ More Commands",
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed8.set_footer(text="Page 8/8 • Use the buttons below to see other games")
-        pages.append(embed8)
+        embed9.set_footer(text="Page 9/9 • Use the buttons below to see other games")
+        pages.append(embed9)
         
         return pages
     
