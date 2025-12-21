@@ -2100,8 +2100,8 @@ class GladiatorFightView(View):
                        f"Lost gladiator fight against {winner_name}")
         
         # Log bet activity for fraud detection
-        log_bet_activity(winner_id, self.bet_amount, "gladiator", "win")
-        log_bet_activity(loser_id, self.bet_amount, "gladiator", "loss")
+        await log_bet_activity(winner_id, self.bet_amount, "gladiator", "win")
+        await log_bet_activity(loser_id, self.bet_amount, "gladiator", "loss")
         
         # Get winner's remaining HP
         winner_hp = fight_data['p1_hp'] if winner_id == fight_data['player1'] else fight_data['p2_hp']
@@ -2576,8 +2576,8 @@ async def chop(ctx):
             # Log transactions
             log_transaction(loser_id, "lumberjack_loss", game_data["bet"], 0, 0, f"Lost lumberjack game vs user {winner_id}")
             log_transaction(winner_id, "lumberjack_win", game_data["bet"], 0, 0, f"Won lumberjack game vs user {loser_id}")
-            log_bet_activity(winner_id, game_data["bet"])
-            log_bet_activity(loser_id, game_data["bet"])
+            await log_bet_activity(winner_id, game_data["bet"], "lumberjack", "win")
+            await log_bet_activity(loser_id, game_data["bet"], "lumberjack", "loss")
             
             # Victory embed
             embed = discord.Embed(
