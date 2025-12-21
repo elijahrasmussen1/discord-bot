@@ -655,7 +655,7 @@ async def assist(ctx):
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
-        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
+        "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
         "**!pick [number]** - Pick your lucky number\n"
@@ -731,19 +731,140 @@ async def withdraw(ctx):
         await ctx.send(f"❌ Error processing withdrawal request: {str(e)}")
 
 # -----------------------------
-# ✅ FIXED COINFLIP COMMAND
+# ✅ FLIP & CHASE GAMBLING GAME
 # -----------------------------
-@bot.command(name="coinflip")
-async def coinflip(ctx, amount: str = None, choice: str = None):
-    """Coinflip gambling command with proper error handling."""
+# Global dictionary to track active flip & chase games
+active_flip_chase = {}
+
+class FlipChaseView(View):
+    def __init__(self, user_id, current_winnings, initial_bet, rounds_won):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.current_winnings = current_winnings
+        self.initial_bet = initial_bet
+        self.rounds_won = rounds_won
+        
+    @discord.ui.button(label="🎲 Chase (Double or Nothing)", style=discord.ButtonStyle.green)
+    async def chase_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+            return
+            
+        await interaction.response.defer()
+        
+        # Flip the coin
+        outcome = random.choice(["heads", "tails"])
+        player_choice = random.choice(["heads", "tails"])
+        won = player_choice == outcome
+        
+        if won:
+            # Double winnings and offer to chase again
+            self.current_winnings *= 2
+            self.rounds_won += 1
+            
+            embed = discord.Embed(
+                title="🎉 Chase Successful!",
+                description=f"**You won!** The coin landed on **{outcome}**!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Current Winnings", value=f"{format_money(self.current_winnings)}", inline=True)
+            embed.add_field(name="Rounds Won", value=f"{self.rounds_won}", inline=True)
+            embed.add_field(name="Initial Bet", value=f"{format_money(self.initial_bet)}", inline=True)
+            embed.set_footer(text="Chase again to double your winnings or Bank to keep them!")
+            
+            # Update view with new winnings
+            new_view = FlipChaseView(self.user_id, self.current_winnings, self.initial_bet, self.rounds_won)
+            await interaction.message.edit(embed=embed, view=new_view)
+        else:
+            # Lost everything
+            embed = discord.Embed(
+                title="💀 Chase Failed!",
+                description=f"**You lost!** The coin landed on **{outcome}**.\nYou lost all your winnings!",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Lost Winnings", value=f"{format_money(self.current_winnings)}", inline=True)
+            embed.add_field(name="Rounds Won", value=f"{self.rounds_won}", inline=True)
+            embed.add_field(name="Initial Bet", value=f"{format_money(self.initial_bet)}", inline=True)
+            
+            # Update database - user loses everything (already deducted initial bet)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            
+            # Log the loss
+            await log_bet_activity(self.user_id, self.initial_bet, "flipchase", "loss")
+            
+            # Remove from active games
+            if self.user_id in active_flip_chase:
+                del active_flip_chase[self.user_id]
+            
+            # Disable buttons
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.message.edit(embed=embed, view=self)
+            
+    @discord.ui.button(label="💰 Bank (Keep Winnings)", style=discord.ButtonStyle.primary)
+    async def bank_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+            return
+            
+        await interaction.response.defer()
+        
+        # Get user data
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        
+        # Add winnings to balance
+        profit = self.current_winnings - self.initial_bet
+        balance += self.current_winnings
+        gambled += self.initial_bet
+        total_gambled += self.initial_bet
+        
+        # Update database
+        c.execute(
+            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+            (balance, gambled, total_gambled, self.user_id)
+        )
+        conn.commit()
+        
+        # Log the win
+        await log_bet_activity(self.user_id, self.initial_bet, "flipchase", "win")
+        
+        # Calculate remaining requirement
+        remaining = max(required_gamble - gambled, 0)
+        
+        embed = discord.Embed(
+            title="💰 Winnings Banked!",
+            description=f"You successfully banked your winnings!",
+            color=discord.Color.gold()
+        )
+        embed.add_field(name="Total Winnings", value=f"{format_money(self.current_winnings)}", inline=True)
+        embed.add_field(name="Profit", value=f"+{format_money(profit)}", inline=True)
+        embed.add_field(name="Rounds Won", value=f"{self.rounds_won}", inline=True)
+        embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=False)
+        embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
+        embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
+        
+        # Remove from active games
+        if self.user_id in active_flip_chase:
+            del active_flip_chase[self.user_id]
+        
+        # Disable buttons
+        for item in self.children:
+            item.disabled = True
+        
+        await interaction.message.edit(embed=embed, view=self)
+
+@bot.command(name="flipchase")
+async def flipchase(ctx, amount: str = None):
+    """Flip & Chase: Win and chase to double, or bank your winnings anytime!"""
     try:
-        if amount is None or choice is None:
-            await ctx.send("❌ Usage: `!coinflip <amount> <heads/tails>`")
+        if amount is None:
+            await ctx.send("❌ Usage: `!flipchase <amount>`\nExample: `!flipchase 10m`")
             return
 
-        choice = choice.lower().strip()
-        if choice not in ("heads", "tails"):
-            await ctx.send("❌ You must choose **heads** or **tails**.")
+        # Check if user already has an active game
+        if ctx.author.id in active_flip_chase:
+            await ctx.send("❌ You already have an active Flip & Chase game! Bank or chase your current winnings first.")
             return
 
         value = parse_money(amount)
@@ -764,7 +885,7 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
                 bot,
                 ctx.author,
                 "Rapid Betting Detected",
-                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Coinflip"
+                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Flip & Chase"
             )
         
         # Check for high bet (fraud detection)
@@ -773,44 +894,72 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
                 bot,
                 ctx.author,
                 "High Value Bet",
-                f"Amount: {value:,}$\nGame: Coinflip\nChoice: {choice}\nBalance: {balance:,}$"
+                f"Amount: {value:,}$\nGame: Flip & Chase\nBalance: {balance:,}$"
             )
 
-        outcome = random.choice(["heads", "tails"])
-        won = choice == outcome
-
-        if won:
-            balance += value
-            result_msg = f"🎉 You won the coinflip! Your balance increased by {value:,}$."
-        else:
-            balance -= value
-            result_msg = f"💀 You lost the coinflip! Your balance decreased by {value:,}$."
-
-        # Increase gambled amount - this reduces the remaining requirement
-        gambled += value
-        total_gambled += value
-        # Do NOT recalculate required_gamble - it stays the same until withdrawal
-
+        # Deduct initial bet from balance
+        balance -= value
+        
+        # Update database
         c.execute(
-            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
-            (balance, gambled, total_gambled, ctx.author.id)
+            "UPDATE users SET balance=? WHERE user_id=?",
+            (balance, ctx.author.id)
         )
         conn.commit()
         
-        # Log bet activity
-        await log_bet_activity(ctx.author.id, value, "coinflip", "win" if won else "loss")
-
-        remaining = max(required_gamble - gambled, 0)
-
-        embed = discord.Embed(title="🎰 Coinflip Result", description=result_msg, color=discord.Color.gold())
-        embed.add_field(name="Balance", value=f"{balance:,}$")
-        embed.add_field(name="Required Gamble", value=f"{required_gamble:,}$")
-        embed.add_field(name="Remaining", value=f"{remaining:,}$")
-        embed.add_field(name="Outcome", value=f"The coin landed on **{outcome}**")
-
-        await ctx.send(embed=embed)
+        # First flip to start the game
+        outcome = random.choice(["heads", "tails"])
+        player_choice = random.choice(["heads", "tails"])
+        won = player_choice == outcome
+        
+        if won:
+            # Won first flip - offer to chase or bank
+            current_winnings = value * 2
+            active_flip_chase[ctx.author.id] = True
+            
+            embed = discord.Embed(
+                title="🎉 First Flip Won!",
+                description=f"**You won!** The coin landed on **{outcome}**!",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Current Winnings", value=f"{format_money(current_winnings)}", inline=True)
+            embed.add_field(name="Initial Bet", value=f"{format_money(value)}", inline=True)
+            embed.add_field(name="Potential Next Win", value=f"{format_money(current_winnings * 2)}", inline=True)
+            embed.set_footer(text="Chase to double your winnings or Bank to keep them safe!")
+            
+            view = FlipChaseView(ctx.author.id, current_winnings, value, 1)
+            await ctx.send(embed=embed, view=view)
+        else:
+            # Lost first flip - game over immediately
+            gambled += value
+            total_gambled += value
+            
+            # Update database
+            c.execute(
+                "UPDATE users SET gambled=?, total_gambled=? WHERE user_id=?",
+                (gambled, total_gambled, ctx.author.id)
+            )
+            conn.commit()
+            
+            # Log the loss
+            await log_bet_activity(ctx.author.id, value, "flipchase", "loss")
+            
+            remaining = max(required_gamble - gambled, 0)
+            
+            embed = discord.Embed(
+                title="💀 First Flip Lost!",
+                description=f"**You lost!** The coin landed on **{outcome}**.",
+                color=discord.Color.red()
+            )
+            embed.add_field(name="Lost Amount", value=f"{format_money(value)}", inline=True)
+            embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
+            embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
+            embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
+            
+            await ctx.send(embed=embed)
+            
     except Exception as e:
-        await ctx.send(f"❌ Error during coinflip: {str(e)}")
+        await ctx.send(f"❌ Error during flip & chase: {str(e)}")
 
 # -----------------------------
 # 🎰 SLOTS GAMBLING GAME
@@ -2681,36 +2830,41 @@ class GamesView(discord.ui.View):
         """Create all game information pages."""
         pages = []
         
-        # Page 1: Coinflip
+        # Page 1: Flip & Chase
         embed1 = discord.Embed(
-            title="🪙 Coinflip",
-            description="**Simple 50/50 chance game with 2x multiplier**",
+            title="🎲 Flip & Chase",
+            description="**Progressive double-or-nothing game - Chase for bigger wins or bank anytime!**",
             color=discord.Color.gold()
         )
         embed1.add_field(
             name="📋 Command",
-            value="`!coinflip <amount> <heads/tails>`",
+            value="`!flipchase <amount>`",
             inline=False
         )
         embed1.add_field(
             name="💡 Example",
-            value="`!coinflip 10m heads`",
+            value="`!flipchase 10m`",
             inline=False
         )
         embed1.add_field(
             name="🎮 How to Play",
-            value="Choose heads or tails. If the coin lands on your choice, you win 2x your bet!",
+            value="1. Bet an amount to start\n2. Win the first flip to start chasing\n3. **Chase**: Double your winnings (risk losing all)\n4. **Bank**: Keep your current winnings safe\n5. Lose any flip = lose everything!",
             inline=False
         )
         embed1.add_field(
-            name="💰 Multiplier",
-            value="**2x** (100% return on win)",
+            name="💰 Multipliers",
+            value="**Round 1**: 2x\n**Round 2**: 4x\n**Round 3**: 8x\n**Round 4**: 16x\n**And so on...**",
             inline=True
         )
         embed1.add_field(
-            name="🎯 Win Chance",
-            value="**50%**",
+            name="🎯 Strategy",
+            value="Balance risk vs reward!\nBank early for safe profit\nor chase for massive wins!",
             inline=True
+        )
+        embed1.add_field(
+            name="⚠️ Warning",
+            value="Losing ANY round means you lose ALL winnings! Bank wisely.",
+            inline=False
         )
         embed1.set_footer(text="Page 1/7 • Use the buttons below to see other games")
         pages.append(embed1)
