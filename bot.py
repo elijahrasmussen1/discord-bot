@@ -670,6 +670,7 @@ async def assist(ctx):
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
+        "**!lb** - View the top 10 players leaderboard\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
@@ -691,6 +692,7 @@ async def assist(ctx):
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
             "**!gambledall** - View total gambling statistics across all players\n"
+            "**!resetgamblingall** - Reset all gambling statistics (total_gambled & gambled)\n"
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
             "**!unstick** - Remove the sticky message from the current channel"
@@ -1361,6 +1363,112 @@ async def gambledall(ctx):
     except Exception as e:
         await ctx.send(f"❌ Error fetching gambling statistics: {str(e)}")
         print(f"Error in gambledall command: {e}")
+
+@bot.command(name="resetgamblingall")
+async def resetgamblingall(ctx):
+    """Owner command to reset all gambling statistics (total_gambled and gambled) for all users."""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    
+    try:
+        # Get count before reset
+        c.execute("SELECT COUNT(*) FROM users WHERE total_gambled > 0 OR gambled > 0")
+        affected_users = c.fetchone()[0]
+        
+        # Reset all gambling statistics
+        c.execute("UPDATE users SET total_gambled = 0, gambled = 0")
+        conn.commit()
+        
+        # Create confirmation embed
+        embed = discord.Embed(
+            title="🔄 Gambling Statistics Reset",
+            description="All gambling statistics have been successfully reset.",
+            color=discord.Color.green(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(
+            name="✅ Reset Complete",
+            value=f"Reset gambling stats for {affected_users} users",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 What was reset:",
+            value="• Total Gambled (All-Time): Set to 0\n• Current Session Gambled: Set to 0",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+        print(f"Owner {ctx.author} reset all gambling statistics for {affected_users} users")
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error resetting gambling statistics: {str(e)}")
+        print(f"Error in resetgamblingall command: {e}")
+
+@bot.command(name="lb", aliases=["leaderboard"])
+async def leaderboard(ctx):
+    """Display the top 10 players by balance for competitive ranking."""
+    try:
+        # Get top 10 players by balance
+        c.execute("""
+            SELECT user_id, balance, total_gambled 
+            FROM users 
+            WHERE balance > 0 
+            ORDER BY balance DESC 
+            LIMIT 10
+        """)
+        top_players = c.fetchall()
+        
+        if not top_players:
+            await ctx.send("📊 No players with balance found yet!")
+            return
+        
+        # Create embed
+        embed = discord.Embed(
+            title="🏆 Gambling Leaderboard",
+            description="Top 10 players by balance",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Build leaderboard text
+        leaderboard_text = ""
+        medals = ["🥇", "🥈", "🥉"]
+        
+        for idx, (user_id, balance, total_gambled) in enumerate(top_players, 1):
+            # Try to fetch username
+            try:
+                user = await bot.fetch_user(user_id)
+                username = user.name
+            except:
+                username = f"User {user_id}"
+            
+            # Add medal for top 3
+            if idx <= 3:
+                medal = medals[idx - 1]
+            else:
+                medal = f"#{idx}"
+            
+            # Format the entry
+            leaderboard_text += f"{medal} **{username}**\n"
+            leaderboard_text += f"   💰 Balance: {format_money(balance)}\n"
+            leaderboard_text += f"   🎲 Gambled: {format_money(total_gambled)}\n\n"
+        
+        embed.add_field(
+            name="🎯 Top Players",
+            value=leaderboard_text,
+            inline=False
+        )
+        
+        embed.set_footer(text="Compete to reach the top! Use gambling games to climb the ranks.")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching leaderboard: {str(e)}")
+        print(f"Error in leaderboard command: {e}")
 
 @bot.command(name="wipeamount")
 async def wipeamount(ctx, user: discord.Member = None):
