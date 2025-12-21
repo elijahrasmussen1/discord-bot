@@ -654,7 +654,8 @@ async def assist(ctx):
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
-        "**!pick [number/gladiator]** - Pick your lucky number OR gladiator\n"
+        "**!pick [number]** - Pick your lucky number\n"
+        "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!games** - View all gambling game rules and info"
@@ -1876,7 +1877,7 @@ class GladiatorConfirmView(View):
         )
         embed.add_field(name="💰 Wager", value=f"{self.bet_amount:,}$ each", inline=True)
         embed.add_field(name="🏆 Winner Takes", value=f"{self.bet_amount * 2:,}$", inline=True)
-        embed.set_footer(text="Use !pick <gladiator_name> to select your fighter")
+        embed.set_footer(text="Use !pickgladiator <gladiator_name> to select your fighter")
         
         # List available gladiators
         glad_list = "\n".join([f"{data['icon']} **{name}** - HP: {data['hp']}, ATK: {data['attack'][0]}-{data['attack'][1]}, DEF: {data['defense']}%, Dodge: {data['dodge']}%" 
@@ -2243,13 +2244,13 @@ async def fight(ctx, opponent: discord.Member, amount: str):
     except Exception as e:
         await ctx.send(f"❌ Error creating fight challenge: {str(e)}")
 
-@bot.command(name="pick")
+@bot.command(name="pickgladiator")
 async def pick_gladiator(ctx, *, gladiator_name: str):
     """
     Pick your gladiator for the fight.
     
-    Usage: !pick <gladiator_name>
-    Example: !pick Maximus
+    Usage: !pickgladiator <gladiator_name>
+    Example: !pickgladiator Maximus
     """
     try:
         # Find user's active fight
@@ -2523,7 +2524,7 @@ class GamesView(discord.ui.View):
             name="📋 Commands",
             value=(
                 "1. `!fight @user <amount>` - Challenge a player\n"
-                "2. `!pick <gladiator>` - Select your fighter"
+                "2. `!pickgladiator <gladiator>` - Select your fighter"
             ),
             inline=False
         )
