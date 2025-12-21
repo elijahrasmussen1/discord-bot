@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 from discord.ui import View, Button
 import sqlite3
 import random
@@ -25,6 +25,7 @@ TICKET_CATEGORY_ID = 1442410056019742750
 TRANSCRIPT_CHANNEL_ID = 1442288590611681401
 WITHDRAWAL_LOG_CHANNEL = 1450656547402285167
 AUDIT_LOG_CHANNEL = 1451387246061293662  # Channel for fraud detection and activity logs
+DEPOSIT_STATS_CHANNEL = 1452401825994248212  # Channel for 15-minute deposit statistics
 PING_ROLES = [1442285602166018069, 1442993726057087089]
 MIN_DEPOSIT = 10_000_000
 GAMBLE_PERCENT = 0.30
@@ -3772,6 +3773,80 @@ async def games(ctx):
 
 
 # -----------------------------
+# DEPOSIT STATISTICS TASK
+# -----------------------------
+@tasks.loop(minutes=15)
+async def post_deposit_stats():
+    """Post deposit statistics every 15 minutes."""
+    try:
+        channel = bot.get_channel(DEPOSIT_STATS_CHANNEL)
+        if not channel:
+            print(f"⚠️ Deposit stats channel {DEPOSIT_STATS_CHANNEL} not found")
+            return
+        
+        # Query total deposits from all users
+        c.execute("SELECT SUM(balance) FROM users")
+        result = c.fetchone()
+        total_deposits = result[0] if result[0] else 0
+        
+        # Count number of users with deposits
+        c.execute("SELECT COUNT(*) FROM users WHERE balance > 0")
+        users_with_balance = c.fetchone()[0]
+        
+        # Get total number of users
+        c.execute("SELECT COUNT(*) FROM users")
+        total_users = c.fetchone()[0]
+        
+        # Create embed
+        embed = discord.Embed(
+            title="💰 Total Deposit Statistics",
+            description="Current deposit status across all players",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        
+        embed.add_field(
+            name="📊 Total Deposits",
+            value=f"{format_money(total_deposits)}",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="👥 Active Players",
+            value=f"{users_with_balance:,} players with balance",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📈 Total Users",
+            value=f"{total_users:,} registered users",
+            inline=True
+        )
+        
+        if users_with_balance > 0:
+            avg_balance = total_deposits // users_with_balance
+            embed.add_field(
+                name="💵 Average Balance",
+                value=f"{format_money(avg_balance)}",
+                inline=False
+            )
+        
+        embed.set_footer(text="Updates every 15 minutes")
+        
+        await channel.send(embed=embed)
+        print(f"✅ Posted deposit statistics: {format_money(total_deposits)}")
+        
+    except Exception as e:
+        print(f"❌ Error posting deposit statistics: {str(e)}")
+
+@post_deposit_stats.before_loop
+async def before_deposit_stats():
+    """Wait until bot is ready before starting the task."""
+    await bot.wait_until_ready()
+    print("✅ Deposit statistics task started")
+
+
+# -----------------------------
 # BOT READY
 # -----------------------------
 @bot.event
@@ -3782,6 +3857,11 @@ async def on_ready():
     bot.add_view(TicketPanelView())
     bot.add_view(WithdrawalPanelView())
     print("✅ Persistent views registered")
+    
+    # Start deposit statistics task if not already running
+    if not post_deposit_stats.is_running():
+        post_deposit_stats.start()
+        print("✅ Deposit statistics task started")
 
 @bot.event
 async def on_command_error(ctx, error):
