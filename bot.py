@@ -652,7 +652,10 @@ async def assist(ctx):
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
-        "**!slots [amount]** - Play the slot machine (3x3 grid)"
+        "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
+        "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
+        "**!pick [number]** - Pick your lucky number\n"
+        "**!rules** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
@@ -1306,6 +1309,323 @@ async def unstick(ctx):
         
     except Exception as e:
         await ctx.send(f"❌ Error removing stick message: {str(e)}")
+
+# -----------------------------
+# 🎲 LUCKY NUMBER GAME
+# -----------------------------
+# Store active lucky number games: {user_id: {"bet": amount, "range": max_num, "lucky_num": num, "timestamp": datetime}}
+lucky_number_games = {}
+
+def calculate_lucky_number_multiplier(max_range):
+    """Calculate fair multiplier based on risk (odds of winning)."""
+    if max_range <= 10:
+        return 8.0  # 1/10 = 10% chance → 8x return (80% RTP, house edge 20%)
+    elif max_range <= 50:
+        return 40.0  # 1/50 = 2% chance → 40x return (80% RTP)
+    elif max_range <= 100:
+        return 80.0  # 1/100 = 1% chance → 80x return (80% RTP)
+    elif max_range <= 500:
+        return 400.0  # 1/500 = 0.2% chance → 400x return (80% RTP)
+    elif max_range <= 1000:
+        return 800.0  # 1/1000 = 0.1% chance → 800x return (80% RTP)
+    elif max_range <= 2500:
+        return 2000.0  # 1/2500 = 0.04% chance → 2000x return (80% RTP)
+    elif max_range <= 5000:
+        return 4000.0  # 1/5000 = 0.02% chance → 4000x return (80% RTP)
+    else:
+        return 4000.0  # Cap at 5000
+
+@bot.command(name="luckynumber")
+async def luckynumber(ctx, amount: str = None, max_number: str = None):
+    """
+    Start a lucky number game - guess the lucky number to win big!
+    
+    Usage: !luckynumber <amount> <max_number>
+    Example: !luckynumber 10m 100
+    
+    After starting, use !pick <your_number> to make your guess.
+    
+    Risk levels:
+    - 1-10: Low risk, 8x multiplier
+    - 1-50: Medium risk, 40x multiplier
+    - 1-100: High risk, 80x multiplier
+    - 1-500: Very high risk, 400x multiplier
+    - 1-1000: Extreme risk, 800x multiplier
+    - 1-2500: Ultra risk, 2000x multiplier
+    - 1-5000: Maximum risk, 4000x multiplier
+    """
+    try:
+        if amount is None or max_number is None:
+            await ctx.send("❌ Usage: `!luckynumber <amount> <1-5000>`\nExample: `!luckynumber 10m 100`")
+            return
+
+        # Parse bet amount
+        value = parse_money(amount)
+        if value <= 0:
+            await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+            return
+
+        # Parse max number
+        try:
+            max_num = int(max_number)
+        except:
+            await ctx.send("❌ Invalid number range! Must be a number between 1-5000.")
+            return
+
+        if max_num < 1 or max_num > 5000:
+            await ctx.send("❌ Number range must be between 1-5000!")
+            return
+
+        # Get user data
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+
+        if value > balance:
+            await ctx.send("❌ You cannot gamble more than your balance.")
+            return
+        
+        # Check for rapid betting (fraud detection)
+        is_rapid = await check_rapid_betting(ctx.author.id)
+        if is_rapid:
+            await send_fraud_alert(
+                bot,
+                ctx.author,
+                "Rapid Betting Detected",
+                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Lucky Number"
+            )
+        
+        # Check for high bet (fraud detection)
+        if value >= HIGH_BET_THRESHOLD:
+            await log_user_activity(
+                bot,
+                ctx.author,
+                "High Value Bet",
+                f"Amount: {value:,}$\nGame: Lucky Number\nRange: 1-{max_num}\nBalance: {balance:,}$"
+            )
+
+        # Generate lucky number
+        lucky_num = random.randint(1, max_num)
+        multiplier = calculate_lucky_number_multiplier(max_num)
+        
+        # Store game state
+        lucky_number_games[ctx.author.id] = {
+            "bet": value,
+            "range": max_num,
+            "lucky_num": lucky_num,
+            "timestamp": datetime.now(),
+            "multiplier": multiplier
+        }
+
+        # Create embed
+        embed = discord.Embed(
+            title="🎲 Lucky Number Game Started!",
+            description=f"**Bet Amount:** {value:,}$\n**Range:** 1-{max_num}\n**Multiplier:** {multiplier}x\n\n💡 Use `!pick <number>` to make your guess!",
+            color=discord.Color.purple()
+        )
+        embed.add_field(name="💰 Potential Win", value=f"{int(value * multiplier):,}$", inline=True)
+        embed.add_field(name="🎯 Win Chance", value=f"{(1/max_num)*100:.2f}%", inline=True)
+        embed.add_field(name="⏰ Time Limit", value="60 seconds", inline=True)
+        embed.set_footer(text=f"Good luck, {ctx.author.display_name}!")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting lucky number game: {str(e)}")
+
+@bot.command(name="pick")
+async def pick(ctx, number: str = None):
+    """
+    Pick your lucky number!
+    
+    Usage: !pick <number>
+    Example: !pick 42
+    
+    Must have an active lucky number game started with !luckynumber
+    """
+    try:
+        if number is None:
+            await ctx.send("❌ Usage: `!pick <number>`\nExample: `!pick 42`")
+            return
+
+        # Check if user has an active game
+        if ctx.author.id not in lucky_number_games:
+            await ctx.send("❌ You don't have an active lucky number game!\nStart one with `!luckynumber <amount> <max_number>`")
+            return
+
+        game = lucky_number_games[ctx.author.id]
+        
+        # Check if game expired (60 second timeout)
+        if datetime.now() - game["timestamp"] > timedelta(seconds=60):
+            del lucky_number_games[ctx.author.id]
+            await ctx.send("❌ Your lucky number game expired! Start a new one with `!luckynumber`")
+            return
+
+        # Parse picked number
+        try:
+            picked_num = int(number)
+        except:
+            await ctx.send(f"❌ Invalid number! Must be between 1-{game['range']}")
+            return
+
+        if picked_num < 1 or picked_num > game["range"]:
+            await ctx.send(f"❌ Number must be between 1-{game['range']}!")
+            return
+
+        # Get user data
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        bet_amount = game["bet"]
+        lucky_num = game["lucky_num"]
+        multiplier = game["multiplier"]
+        max_range = game["range"]
+        
+        # Deduct bet from balance
+        balance -= bet_amount
+        
+        # Check if won
+        won = (picked_num == lucky_num)
+        
+        if won:
+            winnings = int(bet_amount * multiplier)
+            balance += winnings
+            result_msg = f"🎉 **JACKPOT!** You guessed the lucky number!\n\n🎲 Lucky Number: **{lucky_num}**\n💰 You won: **{winnings:,}$**"
+            color = discord.Color.gold()
+        else:
+            result_msg = f"💀 Not quite! Better luck next time.\n\n🎲 Lucky Number: **{lucky_num}**\n🎯 Your Pick: **{picked_num}**\n💸 You lost: **{bet_amount:,}$**"
+            color = discord.Color.red()
+        
+        # Update gambled amount
+        gambled += bet_amount
+        total_gambled += bet_amount
+        
+        c.execute(
+            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+            (balance, gambled, total_gambled, ctx.author.id)
+        )
+        conn.commit()
+        
+        # Log bet activity
+        await log_bet_activity(ctx.author.id, bet_amount, "luckynumber", "win" if won else "loss")
+        
+        # Log transaction
+        await log_transaction(
+            ctx.author.id,
+            "luckynumber_bet",
+            bet_amount,
+            balance + bet_amount,
+            balance,
+            f"Lucky Number: Range 1-{max_range}, Picked {picked_num}, Lucky {lucky_num}, {'WON' if won else 'LOST'}"
+        )
+        
+        remaining = max(required_gamble - gambled, 0)
+        
+        # Create result embed
+        embed = discord.Embed(title="🎲 Lucky Number Result", description=result_msg, color=color)
+        embed.add_field(name="💵 Balance", value=f"{balance:,}$", inline=True)
+        embed.add_field(name="📊 Required Gamble", value=f"{required_gamble:,}$", inline=True)
+        embed.add_field(name="⏳ Remaining", value=f"{remaining:,}$", inline=True)
+        embed.add_field(name="🎰 Multiplier", value=f"{multiplier}x", inline=True)
+        embed.add_field(name="🎯 Range", value=f"1-{max_range}", inline=True)
+        embed.add_field(name="📈 Win Chance", value=f"{(1/max_range)*100:.2f}%", inline=True)
+        
+        await ctx.send(embed=embed)
+        
+        # Remove game from active games
+        del lucky_number_games[ctx.author.id]
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error picking number: {str(e)}")
+
+# -----------------------------
+# 📜 RULES COMMAND
+# -----------------------------
+@bot.command(name="rules")
+async def rules(ctx):
+    """
+    Display the rules and information for all gambling games.
+    
+    Usage: !rules
+    """
+    try:
+        embed = discord.Embed(
+            title="🎰 Gambling Games Rules",
+            description="Welcome to Eli's MM gambling system! Here are all the games you can play:",
+            color=discord.Color.blue()
+        )
+        
+        # Coinflip
+        embed.add_field(
+            name="🪙 Coinflip",
+            value=(
+                "**Command:** `!coinflip <amount> <heads/tails>`\n"
+                "**Example:** `!coinflip 10m heads`\n"
+                "**How to Play:** Choose heads or tails. If the coin lands on your choice, you win 2x your bet!\n"
+                "**Multiplier:** 2x (100% return on win)\n"
+                "**Win Chance:** 50%\n"
+            ),
+            inline=False
+        )
+        
+        # Slots
+        embed.add_field(
+            name="🎰 Slots",
+            value=(
+                "**Command:** `!slots <amount>`\n"
+                "**Example:** `!slots 5m`\n"
+                "**How to Play:** Spin a 3x3 slot machine! Match 3 symbols in a row, column, or diagonal to win.\n"
+                "**Multipliers:**\n"
+                "  • 7️⃣ Jackpot = 5.0x\n"
+                "  • 💎 Diamond = 3.0x\n"
+                "  • ⭐ Star = 2.5x\n"
+                "  • 🍇 Grape = 2.0x\n"
+                "  • 🍊 Orange = 1.8x\n"
+                "  • 🍋 Lemon = 1.5x\n"
+                "  • 🍒 Cherry = 1.2x\n"
+                "**Features:** Click 🔄 Spin Again to replay with same bet!\n"
+            ),
+            inline=False
+        )
+        
+        # Lucky Number
+        embed.add_field(
+            name="🎲 Lucky Number",
+            value=(
+                "**Commands:** \n"
+                "  1. `!luckynumber <amount> <max_number>` - Start game\n"
+                "  2. `!pick <number>` - Make your guess\n"
+                "**Example:** `!luckynumber 1m 100` then `!pick 42`\n"
+                "**How to Play:** Choose a number range (1-5000), then guess the lucky number!\n"
+                "**Risk Levels & Multipliers:**\n"
+                "  • 1-10: Low risk → 8x\n"
+                "  • 1-50: Medium risk → 40x\n"
+                "  • 1-100: High risk → 80x\n"
+                "  • 1-500: Very high risk → 400x\n"
+                "  • 1-1000: Extreme risk → 800x\n"
+                "  • 1-2500: Ultra risk → 2000x\n"
+                "  • 1-5000: Maximum risk → 4000x\n"
+                "**Note:** Higher ranges = bigger multipliers but lower win chance!\n"
+            ),
+            inline=False
+        )
+        
+        # General Rules
+        embed.add_field(
+            name="📋 General Rules",
+            value=(
+                "• **Deposit Requirement:** Minimum 10M deposit required\n"
+                "• **Gambling Requirement:** Must gamble 30% of your balance before withdrawing\n"
+                "• **Balance Updates:** All wins/losses update your balance instantly\n"
+                "• **Fraud Detection:** Rapid betting and high-value bets are monitored\n"
+                "• **Withdrawals:** Use `!withdraw` when you meet the gambling requirement\n"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="🎲 Gamble responsibly! • Use !assist for more commands")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error displaying rules: {str(e)}")
 
 
 # -----------------------------
