@@ -1707,18 +1707,18 @@ class CrashView(View):
         self.bet_amount = bet_amount
         self.crash_point = crash_point
         self.ctx = ctx
-        self.current_multiplier = 0.0
+        self.current_multiplier = 1.0  # Start at 1.0x
         self.cashed_out = False
         self.crashed = False
         self.task = None
-        self.low_cashout_count = 0  # Track cashouts at 0.1x
     
     async def start_crash_animation(self, message):
         """Animate the multiplier increasing until crash."""
         try:
             while not self.cashed_out and not self.crashed:
-                # Increase multiplier
-                self.current_multiplier += 0.1
+                # Increase multiplier (starts at 1.0x, increases by 0.05-0.1x each tick)
+                increment = round(random.uniform(0.05, 0.1), 2)
+                self.current_multiplier += increment
                 self.current_multiplier = round(self.current_multiplier, 2)
                 
                 # Check if we've reached the crash point
@@ -1791,8 +1791,16 @@ class CrashView(View):
                     # Message was deleted
                     break
                 
-                # Wait before next update (gets faster as multiplier increases)
-                wait_time = max(0.8, 1.8 - (self.current_multiplier - 1.0) * 0.05)
+                # Wait before next update (dynamic speed based on multiplier)
+                # Starts slower (1.5s), speeds up gradually, caps at 0.6s
+                if self.current_multiplier < 2.0:
+                    wait_time = 1.5
+                elif self.current_multiplier < 3.0:
+                    wait_time = 1.2
+                elif self.current_multiplier < 5.0:
+                    wait_time = 0.9
+                else:
+                    wait_time = 0.6
                 await asyncio.sleep(wait_time)
                 
         except Exception as e:
@@ -1813,12 +1821,14 @@ class CrashView(View):
             await interaction.response.send_message("❌ Too late! The game already crashed!", ephemeral=True)
             return
         
-        # Check if cashing out at 0.1x more than twice
-        if self.current_multiplier <= 0.1:
-            self.low_cashout_count += 1
-            if self.low_cashout_count > 2:
-                await interaction.response.send_message("❌ Error: Cannot cash out at 0.1x more than twice! Wait for the multiplier to increase.", ephemeral=True)
-                return
+        # Minimum cashout multiplier is 1.15x to prevent instant cashouts
+        if self.current_multiplier < 1.15:
+            await interaction.response.send_message(
+                f"❌ Minimum cashout is **1.15x**! Current: **{self.current_multiplier}x**\n"
+                "Wait for the multiplier to increase before cashing out.",
+                ephemeral=True
+            )
+            return
         
         # Cash out successfully
         self.cashed_out = True
@@ -1926,26 +1936,26 @@ async def crash(ctx, amount: str = None):
             await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
             return
         
-        # Generate random crash point (weighted towards lower values for house edge)
-        # Using exponential distribution for realistic crash game odds
+        # Generate random crash point with proper house edge
+        # Fair distribution that prevents exploitation while keeping it fun
         import random
         rand = random.random()
         
-        if rand < 0.50:
-            # 50% chance: crash between 1.1x and 1.5x (very common, minimal wins)
-            crash_point = round(random.uniform(1.1, 1.5), 2)
-        elif rand < 0.75:
-            # 25% chance: crash between 1.5x and 2.5x (low multipliers)
-            crash_point = round(random.uniform(1.5, 2.5), 2)
-        elif rand < 0.90:
-            # 15% chance: crash between 2.5x and 5.0x (medium multipliers)
-            crash_point = round(random.uniform(2.5, 5.0), 2)
-        elif rand < 0.97:
-            # 7% chance: crash between 5.0x and 10.0x (high multipliers)
-            crash_point = round(random.uniform(5.0, 10.0), 2)
+        if rand < 0.40:
+            # 40% chance: crash between 1.2x and 1.8x (most common)
+            crash_point = round(random.uniform(1.2, 1.8), 2)
+        elif rand < 0.65:
+            # 25% chance: crash between 1.8x and 2.5x
+            crash_point = round(random.uniform(1.8, 2.5), 2)
+        elif rand < 0.82:
+            # 17% chance: crash between 2.5x and 4.0x
+            crash_point = round(random.uniform(2.5, 4.0), 2)
+        elif rand < 0.92:
+            # 10% chance: crash between 4.0x and 8.0x
+            crash_point = round(random.uniform(4.0, 8.0), 2)
         else:
-            # 3% chance: crash between 10.0x and 50.0x (rare jackpot)
-            crash_point = round(random.uniform(10.0, 50.0), 2)
+            # 8% chance: crash between 8.0x and 30.0x (rare jackpot)
+            crash_point = round(random.uniform(8.0, 30.0), 2)
         
         # Create initial embed
         embed = discord.Embed(
@@ -1956,7 +1966,7 @@ async def crash(ctx, amount: str = None):
         embed.add_field(name="💰 Bet Amount", value=f"{value:,}$", inline=True)
         embed.add_field(name="📈 Starting Multiplier", value="1.0x", inline=True)
         embed.add_field(name="🎯 Status", value="**READY**", inline=True)
-        embed.set_footer(text="Click 'Cash Out' at any time to secure your winnings!")
+        embed.set_footer(text="Multiplier starts at 1.0x - Cash out before it crashes!")
         
         # Create view with crash point
         view = CrashView(ctx.author.id, value, crash_point, ctx)
@@ -3066,22 +3076,27 @@ class GamesView(discord.ui.View):
         embed4.add_field(
             name="📊 Crash Distribution",
             value=(
-                "• **50%:** 1.1x-1.5x (very common)\n"
-                "• **25%:** 1.5x-2.5x (common)\n"
-                "• **15%:** 2.5x-5.0x (uncommon)\n"
-                "• **7%:** 5.0x-10.0x (rare)\n"
-                "• **3%:** 10.0x-50.0x (very rare jackpot!)"
+                "• **40%:** 1.2x-1.8x (most common)\n"
+                "• **25%:** 1.8x-2.5x (common)\n"
+                "• **17%:** 2.5x-4.0x (uncommon)\n"
+                "• **10%:** 4.0x-8.0x (rare)\n"
+                "• **8%:** 8.0x-30.0x (very rare jackpot!)"
             ),
             inline=False
         )
         embed4.add_field(
             name="💰 Winnings",
-            value="Bet amount × multiplier when you cash out",
+            value="Bet amount × multiplier when you cash out (minimum 1.15x)",
             inline=False
         )
         embed4.add_field(
             name="✨ Features",
-            value="Click 💵 **Cash Out** button to secure your winnings at any time!",
+            value=(
+                "• Multiplier starts at **1.0x**\n"
+                "• Minimum cashout: **1.15x**\n"
+                "• Click 💵 **Cash Out** button to secure winnings!\n"
+                "• Balanced distribution prevents exploitation"
+            ),
             inline=False
         )
         embed4.add_field(
