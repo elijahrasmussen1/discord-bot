@@ -658,6 +658,8 @@ async def assist(ctx):
         "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
+        "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
+        "**!chop** - Take your turn chopping the tree\n"
         "**!games** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
@@ -2022,7 +2024,7 @@ class GladiatorFightView(View):
             if fight_data["p2_hp"] <= 0:
                 break
             
-            await asyncio.sleep(2.5)  # Pause between actions
+            await asyncio.sleep(3.5)  # Pause between actions for readability
             
             # Player 2 attacks Player 1
             action_result = self.process_attack(fight_data, "p2", "p1", p2_stats, p1_stats, p2_name, p1_name)
@@ -2047,7 +2049,7 @@ class GladiatorFightView(View):
                     break
             
             await fight_message.edit(embed=embed)
-            await asyncio.sleep(2.5)
+            await asyncio.sleep(3.5)
             
             # Check if P1 died
             if fight_data["p1_hp"] <= 0:
@@ -2379,6 +2381,286 @@ async def pick_gladiator(ctx, *, gladiator_name: str):
         await ctx.send(f"❌ Error selecting gladiator: {str(e)}")
 
 # -----------------------------
+# 🪓 RISKY LUMBERJACK COMMAND
+# -----------------------------
+# Active lumberjack games storage
+lumberjack_games = {}
+
+@bot.command(name="choptree")
+async def choptree(ctx, opponent: discord.Member, amount: str):
+    """
+    Challenge another player to Risky Lumberjack!
+    
+    Usage: !choptree @user <amount>
+    Example: !choptree @John 25m
+    
+    Take turns cutting the tree. The player who makes it fall loses!
+    """
+    try:
+        # Validate opponent
+        if opponent.bot or opponent.id == ctx.author.id:
+            return await ctx.send("❌ Cannot challenge bots or yourself!")
+        
+        # Parse bet amount
+        bet_amount = parse_money(amount)
+        if bet_amount < 10_000_000:
+            return await ctx.send("❌ Minimum bet is 10M!")
+        
+        # Check if users already in a game
+        if ctx.author.id in lumberjack_games or opponent.id in lumberjack_games:
+            return await ctx.send("❌ One of you is already in a lumberjack game!")
+        
+        # Validate balances
+        c.execute("SELECT balance FROM users WHERE user_id = ?", (ctx.author.id,))
+        challenger_data = c.execute("SELECT balance FROM users WHERE user_id = ?", (ctx.author.id,)).fetchone()
+        opponent_data = c.execute("SELECT balance FROM users WHERE user_id = ?", (opponent.id,)).fetchone()
+        
+        if not challenger_data or challenger_data[0] < bet_amount:
+            return await ctx.send(f"❌ You need at least {format_money(bet_amount)} to play!")
+        
+        if not opponent_data or opponent_data[0] < bet_amount:
+            return await ctx.send(f"❌ {opponent.mention} doesn't have enough balance!")
+        
+        # Create challenge embed
+        embed = discord.Embed(
+            title="🪓 Risky Lumberjack Challenge!",
+            description=f"{ctx.author.mention} has challenged {opponent.mention} to a tree-cutting duel!",
+            color=discord.Color.dark_green()
+        )
+        embed.add_field(name="💰 Bet Amount", value=f"{format_money(bet_amount)} each", inline=True)
+        embed.add_field(name="🏆 Prize", value=f"{format_money(bet_amount * 2)}", inline=True)
+        embed.add_field(
+            name="🎮 How to Play",
+            value="Take turns using `!chop` to cut sections of the tree. The player who makes the tree fall loses!",
+            inline=False
+        )
+        
+        # Create accept/decline view
+        view = LumberjackChallengeView(ctx.author, opponent, bet_amount)
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting lumberjack game: {str(e)}")
+
+class LumberjackChallengeView(discord.ui.View):
+    """View for accepting/declining lumberjack challenge."""
+    
+    def __init__(self, challenger, opponent, bet_amount):
+        super().__init__(timeout=60)
+        self.challenger = challenger
+        self.opponent = opponent
+        self.bet_amount = bet_amount
+        
+    @discord.ui.button(label="✅ Accept", style=discord.ButtonStyle.green)
+    async def accept_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Accept the challenge."""
+        if interaction.user.id != self.opponent.id:
+            return await interaction.response.send_message("❌ This challenge isn't for you!", ephemeral=True)
+        
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        
+        # Initialize game
+        tree_health = random.randint(15, 25)  # Random tree health
+        game_data = {
+            "player1": self.challenger.id,
+            "player2": self.opponent.id,
+            "bet": self.bet_amount,
+            "tree_health": tree_health,
+            "max_health": tree_health,
+            "current_turn": self.challenger.id,
+            "turns_taken": 0,
+            "channel_id": interaction.channel.id
+        }
+        
+        lumberjack_games[self.challenger.id] = game_data
+        lumberjack_games[self.opponent.id] = game_data
+        
+        # Show game started
+        embed = discord.Embed(
+            title="🪓 RISKY LUMBERJACK",
+            description=f"The tree stands tall! Take turns chopping with `!chop`",
+            color=discord.Color.dark_green()
+        )
+        embed.add_field(name="🌳 Tree Health", value=f"**{tree_health}/{tree_health}**", inline=True)
+        embed.add_field(name="💰 Prize Pool", value=format_money(self.bet_amount * 2), inline=True)
+        embed.add_field(
+            name="⏳ Current Turn",
+            value=f"<@{self.challenger.id}>",
+            inline=False
+        )
+        embed.add_field(
+            name="ℹ️ Game Rules",
+            value=(
+                "• Each chop removes 1-3 tree health\n"
+                "• The player who reduces tree health to 0 loses!\n"
+                "• Think carefully about your timing!"
+            ),
+            inline=False
+        )
+        embed.set_footer(text=f"Turns: 0 • Use !chop to cut the tree")
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+        
+    @discord.ui.button(label="❌ Decline", style=discord.ButtonStyle.red)
+    async def decline_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Decline the challenge."""
+        if interaction.user.id != self.opponent.id:
+            return await interaction.response.send_message("❌ This challenge isn't for you!", ephemeral=True)
+        
+        embed = discord.Embed(
+            title="❌ Challenge Declined",
+            description=f"{self.opponent.mention} declined the lumberjack challenge!",
+            color=discord.Color.red()
+        )
+        
+        for child in self.children:
+            child.disabled = True
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+@bot.command(name="chop")
+async def chop(ctx):
+    """
+    Take your turn chopping the tree!
+    
+    Usage: !chop
+    
+    Each chop deals 1-3 damage to the tree. Make the tree fall and you lose!
+    """
+    try:
+        # Check if user is in a game
+        if ctx.author.id not in lumberjack_games:
+            return await ctx.send("❌ You're not in a lumberjack game! Use `!choptree @user <amount>` to start one.")
+        
+        game_data = lumberjack_games[ctx.author.id]
+        
+        # Check if it's user's turn
+        if game_data["current_turn"] != ctx.author.id:
+            other_player = game_data["player1"] if game_data["current_turn"] == game_data["player1"] else game_data["player2"]
+            return await ctx.send(f"❌ It's <@{other_player}>'s turn!")
+        
+        # Check if in correct channel
+        if game_data["channel_id"] != ctx.channel.id:
+            return await ctx.send("❌ You must chop in the channel where the game started!")
+        
+        # Calculate damage (1-3)
+        damage = random.randint(1, 3)
+        game_data["tree_health"] -= damage
+        game_data["turns_taken"] += 1
+        
+        # Create action message
+        action_messages = {
+            1: f"🪓 {ctx.author.mention} carefully chips away at the tree... (-1 HP)",
+            2: f"🪓🪓 {ctx.author.mention} takes a solid swing! (-2 HP)",
+            3: f"🪓🪓🪓 {ctx.author.mention} lands a powerful chop! (-3 HP)"
+        }
+        
+        # Check if tree fell (player loses)
+        if game_data["tree_health"] <= 0:
+            # Tree fell - current player loses!
+            loser_id = ctx.author.id
+            winner_id = game_data["player1"] if loser_id == game_data["player2"] else game_data["player2"]
+            
+            # Update balances
+            c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (game_data["bet"], loser_id))
+            c.execute("UPDATE users SET balance = balance + ?, total_gambled = total_gambled + ? WHERE user_id = ?", 
+                     (game_data["bet"], game_data["bet"], winner_id))
+            conn.commit()
+            
+            # Log transactions
+            log_transaction(loser_id, "lumberjack_loss", game_data["bet"], 0, 0, f"Lost lumberjack game vs user {winner_id}")
+            log_transaction(winner_id, "lumberjack_win", game_data["bet"], 0, 0, f"Won lumberjack game vs user {loser_id}")
+            log_bet_activity(winner_id, game_data["bet"])
+            log_bet_activity(loser_id, game_data["bet"])
+            
+            # Victory embed
+            embed = discord.Embed(
+                title="💥 THE TREE HAS FALLEN!",
+                description=f"The tree crashed down on {ctx.author.mention}!",
+                color=discord.Color.gold()
+            )
+            embed.add_field(
+                name="🏆 Winner",
+                value=f"<@{winner_id}>",
+                inline=True
+            )
+            embed.add_field(
+                name="💔 Loser",
+                value=f"<@{loser_id}>",
+                inline=True
+            )
+            embed.add_field(
+                name="💰 Winnings",
+                value=format_money(game_data["bet"] * 2),
+                inline=False
+            )
+            embed.add_field(
+                name="📊 Game Stats",
+                value=f"Total Turns: {game_data['turns_taken']}\nFinal Damage: {abs(game_data['tree_health'])} HP overkill",
+                inline=False
+            )
+            embed.set_footer(text=f"The tree stood for {game_data['turns_taken']} turns")
+            
+            # Clean up game
+            del lumberjack_games[game_data["player1"]]
+            del lumberjack_games[game_data["player2"]]
+            
+            await ctx.send(embed=embed)
+            
+        else:
+            # Tree still standing - switch turns
+            game_data["current_turn"] = game_data["player2"] if game_data["current_turn"] == game_data["player1"] else game_data["player1"]
+            
+            # Create health bar
+            health_percent = (game_data["tree_health"] / game_data["max_health"]) * 100
+            if health_percent > 60:
+                bar_color = "🟩"
+            elif health_percent > 30:
+                bar_color = "🟨"
+            else:
+                bar_color = "🟥"
+            
+            filled = int((game_data["tree_health"] / game_data["max_health"]) * 10)
+            empty = 10 - filled
+            health_bar = bar_color + " " + "█" * filled + "░" * empty
+            
+            embed = discord.Embed(
+                title="🪓 RISKY LUMBERJACK",
+                description=action_messages[damage],
+                color=discord.Color.dark_green() if health_percent > 30 else discord.Color.orange()
+            )
+            embed.add_field(
+                name="🌳 Tree Health",
+                value=f"{health_bar}\n**{game_data['tree_health']}/{game_data['max_health']} HP**",
+                inline=False
+            )
+            embed.add_field(
+                name="⏳ Next Turn",
+                value=f"<@{game_data['current_turn']}>",
+                inline=True
+            )
+            embed.add_field(
+                name="💰 Prize Pool",
+                value=format_money(game_data["bet"] * 2),
+                inline=True
+            )
+            embed.set_footer(text=f"Turns: {game_data['turns_taken']} • Use !chop to cut the tree")
+            
+            if game_data["tree_health"] <= 3:
+                embed.add_field(
+                    name="⚠️ WARNING",
+                    value="The tree is about to fall! Next chop could end the game!",
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error during chop: {str(e)}")
+
+# -----------------------------
 # 📜 RULES COMMAND
 # -----------------------------
 # Games Pagination View
@@ -2426,7 +2708,7 @@ class GamesView(discord.ui.View):
             value="**50%**",
             inline=True
         )
-        embed1.set_footer(text="Page 1/6 • Use the buttons below to see other games")
+        embed1.set_footer(text="Page 1/7 • Use the buttons below to see other games")
         pages.append(embed1)
         
         # Page 2: Slots
@@ -2468,7 +2750,7 @@ class GamesView(discord.ui.View):
             value="Click 🔄 **Spin Again** to replay with same bet!",
             inline=False
         )
-        embed2.set_footer(text="Page 2/6 • Use the buttons below to see other games")
+        embed2.set_footer(text="Page 2/7 • Use the buttons below to see other games")
         pages.append(embed2)
         
         # Page 3: Lucky Number
@@ -2513,7 +2795,7 @@ class GamesView(discord.ui.View):
             value="Higher ranges = bigger multipliers but lower win chance!",
             inline=False
         )
-        embed3.set_footer(text="Page 3/6 • Use the buttons below to see other games")
+        embed3.set_footer(text="Page 3/7 • Use the buttons below to see other games")
         pages.append(embed3)
         
         # Page 4: Crash
@@ -2563,7 +2845,7 @@ class GamesView(discord.ui.View):
             value="If you don't cash out before the crash, you lose your entire bet",
             inline=False
         )
-        embed4.set_footer(text="Page 4/6 • Use the buttons below to see other games")
+        embed4.set_footer(text="Page 4/7 • Use the buttons below to see other games")
         pages.append(embed4)
         
         # Page 5: Gladiator Fights
@@ -2614,47 +2896,98 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed5.set_footer(text="Page 5/6 • Use the buttons below to see other games")
+        embed5.set_footer(text="Page 5/7 • Use the buttons below to see other games")
         pages.append(embed5)
         
-        # Page 6: General Rules
+        # Page 6: Risky Lumberjack
         embed6 = discord.Embed(
+            title="🪓 Risky Lumberjack",
+            description="**Turn-based tree cutting game - don't make it fall!**",
+            color=discord.Color.dark_green()
+        )
+        embed6.add_field(
+            name="📋 Commands",
+            value=(
+                "1. `!choptree @user <amount>` - Challenge a player\n"
+                "2. `!chop` - Take your turn cutting"
+            ),
+            inline=False
+        )
+        embed6.add_field(
+            name="💡 Example",
+            value="`!choptree @Sarah 25m` → `!chop`",
+            inline=False
+        )
+        embed6.add_field(
+            name="🎮 How to Play",
+            value="Take turns chopping a tree. Each chop removes 1-3 HP. The player who makes the tree fall (HP reaches 0) loses!",
+            inline=False
+        )
+        embed6.add_field(
+            name="🌳 Tree Health",
+            value="Random starting health between 15-25 HP",
+            inline=False
+        )
+        embed6.add_field(
+            name="🪓 Chop Damage",
+            value=(
+                "• Light Chop: -1 HP\n"
+                "• Medium Chop: -2 HP\n"
+                "• Heavy Chop: -3 HP"
+            ),
+            inline=False
+        )
+        embed6.add_field(
+            name="⚠️ Strategy",
+            value="Plan your chops carefully! You don't want to be the one to fell the tree!",
+            inline=False
+        )
+        embed6.add_field(
+            name="🏆 Winner Takes All",
+            value="Winner gets both bets (2x your wager!)",
+            inline=False
+        )
+        embed6.set_footer(text="Page 6/7 • Use the buttons below to see other games")
+        pages.append(embed6)
+        
+        # Page 7: General Rules
+        embed7 = discord.Embed(
             title="📋 General Rules",
             description="**Important information about the gambling system**",
             color=discord.Color.red()
         )
-        embed6.add_field(
+        embed7.add_field(
             name="💵 Deposit Requirement",
             value="Minimum **10M** deposit required",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🎲 Gambling Requirement",
             value="Must gamble **30%** of your balance before withdrawing",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="⚡ Balance Updates",
             value="All wins/losses update your balance instantly",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🛡️ Fraud Detection",
             value="Rapid betting and high-value bets are monitored",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="💸 Withdrawals",
             value="Use `!withdraw` when you meet the gambling requirement",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="ℹ️ More Commands",
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed6.set_footer(text="Page 6/6 • Use the buttons below to see other games")
-        pages.append(embed6)
+        embed7.set_footer(text="Page 7/7 • Use the buttons below to see other games")
+        pages.append(embed7)
         
         return pages
     
