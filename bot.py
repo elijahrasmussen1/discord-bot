@@ -1766,17 +1766,20 @@ async def crash(ctx, amount: str = None):
         import random
         rand = random.random()
         
-        if rand < 0.33:
-            # 33% chance: crash between 1.1x and 2.0x
-            crash_point = round(random.uniform(1.1, 2.0), 2)
-        elif rand < 0.66:
-            # 33% chance: crash between 2.0x and 5.0x
-            crash_point = round(random.uniform(2.0, 5.0), 2)
+        if rand < 0.50:
+            # 50% chance: crash between 1.1x and 1.5x (very common, minimal wins)
+            crash_point = round(random.uniform(1.1, 1.5), 2)
+        elif rand < 0.75:
+            # 25% chance: crash between 1.5x and 2.5x (low multipliers)
+            crash_point = round(random.uniform(1.5, 2.5), 2)
         elif rand < 0.90:
-            # 24% chance: crash between 5.0x and 10.0x
+            # 15% chance: crash between 2.5x and 5.0x (medium multipliers)
+            crash_point = round(random.uniform(2.5, 5.0), 2)
+        elif rand < 0.97:
+            # 7% chance: crash between 5.0x and 10.0x (high multipliers)
             crash_point = round(random.uniform(5.0, 10.0), 2)
         else:
-            # 10% chance: crash between 10.0x and 50.0x (rare high multipliers)
+            # 3% chance: crash between 10.0x and 50.0x (rare jackpot)
             crash_point = round(random.uniform(10.0, 50.0), 2)
         
         # Create initial embed
@@ -1891,7 +1894,12 @@ async def rules(ctx):
                 "**Example:** `!crash 10m`\n"
                 "**How to Play:** A multiplier starts at 1.0x and climbs higher. Cash out before it crashes to win!\n"
                 "**Strategy:** The longer you wait, the higher the multiplier - but higher risk of crashing!\n"
-                "**Multiplier Range:** Crashes anywhere from 1.1x to 50x+ (weighted towards lower values)\n"
+                "**Crash Distribution:**\n"
+                "  • 50%: 1.1x-1.5x (very common)\n"
+                "  • 25%: 1.5x-2.5x (common)\n"
+                "  • 15%: 2.5x-5.0x (uncommon)\n"
+                "  • 7%: 5.0x-10.0x (rare)\n"
+                "  • 3%: 10.0x-50.0x (very rare jackpot!)\n"
                 "**Your Winnings:** Bet amount × multiplier when you cash out\n"
                 "**Features:** Click 💵 Cash Out button to secure your winnings at any time!\n"
                 "**Risk:** If you don't cash out before the crash, you lose your entire bet\n"
