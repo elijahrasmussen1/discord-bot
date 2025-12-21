@@ -2509,7 +2509,8 @@ class BlackjackGame:
     
     def card_value(self, card):
         """Get numerical value of a card"""
-        rank = card[:-2] if len(card) == 3 else card[:-1]
+        # Remove emoji suit (last 2 characters for emojis like ♠️)
+        rank = card[:-2]
         if rank in ['J', 'Q', 'K']:
             return 10
         elif rank == 'A':
@@ -3598,7 +3599,7 @@ class GamesView(discord.ui.View):
             description="**Epic PvP battles with 8 unique gladiators**",
             color=discord.Color.orange()
         )
-        embed5.add_field(
+        embed6.add_field(
             name="📋 Commands",
             value=(
                 "1. `!fight @user <amount>` - Challenge a player\n"
@@ -3606,22 +3607,22 @@ class GamesView(discord.ui.View):
             ),
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="💡 Example",
-            value="`!fight @John 50m` → `!pick Maximus`",
+            value="`!fight @John 50m` → `!pickgladiator Maximus`",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="🎮 How to Play",
             value="Challenge another player to a 1v1 gladiator duel! Both bet the same amount, winner takes all!",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="🏛️ Gladiators",
             value="8 unique fighters with different stats (HP, Attack, Defense, Dodge)",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="⚔️ Combat Mechanics",
             value=(
                 "• 💨 **Dodge:** Avoid damage + regenerate 5-15 HP\n"
@@ -3630,12 +3631,12 @@ class GamesView(discord.ui.View):
             ),
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="✨ Features",
             value="Real-time animated combat, health bars, 🔄 rematch button",
             inline=False
         )
-        embed5.add_field(
+        embed6.add_field(
             name="🏆 Winner Takes All",
             value="Winner gets both bets (2x your wager!)",
             inline=False
@@ -3649,7 +3650,7 @@ class GamesView(discord.ui.View):
             description="**Turn-based tree cutting game - don't make it fall!**",
             color=discord.Color.dark_green()
         )
-        embed6.add_field(
+        embed7.add_field(
             name="📋 Commands",
             value=(
                 "1. `!choptree @user <amount>` - Challenge a player\n"
@@ -3657,22 +3658,22 @@ class GamesView(discord.ui.View):
             ),
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="💡 Example",
             value="`!choptree @Sarah 25m` → `!chop`",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🎮 How to Play",
             value="Take turns chopping a tree. Each chop removes 1-3 HP. The player who makes the tree fall (HP reaches 0) loses!",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🌳 Tree Health",
             value="Random starting health between 15-25 HP",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🪓 Chop Damage",
             value=(
                 "• Light Chop: -1 HP\n"
@@ -3681,12 +3682,12 @@ class GamesView(discord.ui.View):
             ),
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="⚠️ Strategy",
             value="Plan your chops carefully! You don't want to be the one to fell the tree!",
             inline=False
         )
-        embed6.add_field(
+        embed7.add_field(
             name="🏆 Winner Takes All",
             value="Winner gets both bets (2x your wager!)",
             inline=False
@@ -3700,32 +3701,32 @@ class GamesView(discord.ui.View):
             description="**Important information about the gambling system**",
             color=discord.Color.red()
         )
-        embed7.add_field(
+        embed8.add_field(
             name="💵 Deposit Requirement",
             value="Minimum **10M** deposit required",
             inline=False
         )
-        embed7.add_field(
+        embed8.add_field(
             name="🎲 Gambling Requirement",
             value="Must gamble **30%** of your balance before withdrawing",
             inline=False
         )
-        embed7.add_field(
+        embed8.add_field(
             name="⚡ Balance Updates",
             value="All wins/losses update your balance instantly",
             inline=False
         )
-        embed7.add_field(
+        embed8.add_field(
             name="🛡️ Fraud Detection",
             value="Rapid betting and high-value bets are monitored",
             inline=False
         )
-        embed7.add_field(
+        embed8.add_field(
             name="💸 Withdrawals",
             value="Use `!withdraw` when you meet the gambling requirement",
             inline=False
         )
-        embed7.add_field(
+        embed8.add_field(
             name="ℹ️ More Commands",
             value="Use `!assist` to see all available commands",
             inline=False
