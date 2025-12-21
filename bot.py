@@ -654,8 +654,9 @@ async def assist(ctx):
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
-        "**!pick [number]** - Pick your lucky number\n"
+        "**!pick [number/gladiator]** - Pick your lucky number OR gladiator\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
+        "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!rules** - View all gambling game rules and info"
     ))
     if is_owner(ctx.author):
@@ -1815,6 +1816,516 @@ async def crash(ctx, amount: str = None):
         await ctx.send(f"❌ Error starting crash game: {str(e)}")
 
 # -----------------------------
+# ⚔️ GLADIATOR FIGHTS GAME
+# -----------------------------
+
+# Gladiator roster with unique stats
+GLADIATORS = {
+    "Maximus": {"hp": 100, "attack": (15, 25), "defense": 15, "dodge": 20, "icon": "⚔️"},
+    "Spartacus": {"hp": 110, "attack": (18, 23), "defense": 12, "dodge": 15, "icon": "🗡️"},
+    "Achilles": {"hp": 95, "attack": (20, 28), "defense": 10, "dodge": 25, "icon": "🏹"},
+    "Leonidas": {"hp": 120, "attack": (12, 20), "defense": 20, "dodge": 10, "icon": "🛡️"},
+    "Hercules": {"hp": 130, "attack": (10, 22), "defense": 18, "dodge": 8, "icon": "💪"},
+    "Thor": {"hp": 105, "attack": (16, 26), "defense": 14, "dodge": 18, "icon": "⚡"},
+    "Atlas": {"hp": 125, "attack": (14, 18), "defense": 22, "dodge": 5, "icon": "🗿"},
+    "Perseus": {"hp": 100, "attack": (17, 24), "defense": 13, "dodge": 22, "icon": "⚔️"},
+}
+
+# Active gladiator fights
+gladiator_fights = {}  # {challenge_id: {players, bets, gladiators, etc}}
+
+class GladiatorConfirmView(View):
+    """View for confirming gladiator fight participation."""
+    
+    def __init__(self, challenger_id, opponent_id, bet_amount, challenge_id):
+        super().__init__(timeout=60)
+        self.challenger_id = challenger_id
+        self.opponent_id = opponent_id
+        self.bet_amount = bet_amount
+        self.challenge_id = challenge_id
+    
+    @discord.ui.button(label="✅ Accept Fight", style=discord.ButtonStyle.green)
+    async def accept_fight(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.opponent_id:
+            await interaction.response.send_message("❌ Only the challenged player can accept this fight!", ephemeral=True)
+            return
+        
+        # Check if opponent has enough balance
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.opponent_id)
+        
+        if balance < self.bet_amount:
+            await interaction.response.send_message(
+                f"❌ Insufficient balance! You need {self.bet_amount:,}$ but only have {balance:,}$",
+                ephemeral=True
+            )
+            return
+        
+        # Update fight data
+        if self.challenge_id in gladiator_fights:
+            gladiator_fights[self.challenge_id]["accepted"] = True
+        
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        
+        # Show gladiator selection to opponent
+        embed = discord.Embed(
+            title="⚔️ Fight Accepted!",
+            description=f"<@{self.opponent_id}>, choose your gladiator!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="💰 Wager", value=f"{self.bet_amount:,}$ each", inline=True)
+        embed.add_field(name="🏆 Winner Takes", value=f"{self.bet_amount * 2:,}$", inline=True)
+        embed.set_footer(text="Use !pick <gladiator_name> to select your fighter")
+        
+        # List available gladiators
+        glad_list = "\n".join([f"{data['icon']} **{name}** - HP: {data['hp']}, ATK: {data['attack'][0]}-{data['attack'][1]}, DEF: {data['defense']}%, Dodge: {data['dodge']}%" 
+                               for name, data in GLADIATORS.items()])
+        embed.add_field(name="🏛️ Available Gladiators", value=glad_list, inline=False)
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+    
+    @discord.ui.button(label="❌ Decline Fight", style=discord.ButtonStyle.red)
+    async def decline_fight(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.opponent_id:
+            await interaction.response.send_message("❌ Only the challenged player can decline this fight!", ephemeral=True)
+            return
+        
+        # Remove from active fights
+        if self.challenge_id in gladiator_fights:
+            del gladiator_fights[self.challenge_id]
+        
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+        
+        embed = discord.Embed(
+            title="❌ Fight Declined",
+            description=f"<@{self.opponent_id}> has declined the gladiator fight.",
+            color=discord.Color.red()
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class GladiatorFightView(View):
+    """View for active gladiator fight with next round button."""
+    
+    def __init__(self, player1_id, player2_id, bet_amount, challenge_id):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.player1_id = player1_id
+        self.player2_id = player2_id
+        self.bet_amount = bet_amount
+        self.challenge_id = challenge_id
+    
+    @discord.ui.button(label="🔄 Next Round", style=discord.ButtonStyle.blurple, disabled=True)
+    async def next_round(self, interaction: discord.Interaction, button: Button):
+        # Check if either player clicked
+        if interaction.user.id not in [self.player1_id, self.player2_id]:
+            await interaction.response.send_message("❌ Only the fighters can start the next round!", ephemeral=True)
+            return
+        
+        # Disable button during fight
+        button.disabled = True
+        await interaction.response.edit_message(view=self)
+        
+        # Start a new fight with same gladiators
+        if self.challenge_id in gladiator_fights:
+            fight_data = gladiator_fights[self.challenge_id]
+            
+            # Check both players still have balance
+            p1_data = get_user(self.player1_id)
+            p2_data = get_user(self.player2_id)
+            
+            if p1_data[1] < self.bet_amount:
+                await interaction.followup.send(f"❌ <@{self.player1_id}> has insufficient balance for another round!")
+                del gladiator_fights[self.challenge_id]
+                return
+            
+            if p2_data[1] < self.bet_amount:
+                await interaction.followup.send(f"❌ <@{self.player2_id}> has insufficient balance for another round!")
+                del gladiator_fights[self.challenge_id]
+                return
+            
+            # Reset gladiator HP
+            fight_data["p1_hp"] = GLADIATORS[fight_data["p1_gladiator"]]["hp"]
+            fight_data["p2_hp"] = GLADIATORS[fight_data["p2_gladiator"]]["hp"]
+            
+            # Start new fight round
+            await self.run_fight_animation(interaction.channel, fight_data)
+
+    async def run_fight_animation(self, channel, fight_data):
+        """Run the animated fight sequence."""
+        p1_name = fight_data["p1_gladiator"]
+        p2_name = fight_data["p2_gladiator"]
+        p1_stats = GLADIATORS[p1_name]
+        p2_stats = GLADIATORS[p2_name]
+        
+        round_num = 1
+        fight_log = []
+        
+        while fight_data["p1_hp"] > 0 and fight_data["p2_hp"] > 0:
+            # Create round embed
+            embed = discord.Embed(
+                title=f"⚔️ GLADIATOR ARENA - Round {round_num}",
+                description="",
+                color=discord.Color.orange()
+            )
+            
+            # Player 1 info
+            p1_health_bar = self.create_health_bar(fight_data["p1_hp"], p1_stats["hp"])
+            embed.add_field(
+                name=f"{p1_stats['icon']} {p1_name} (<@{fight_data['player1']}>)",
+                value=f"HP: {p1_health_bar} {fight_data['p1_hp']}/{p1_stats['hp']}",
+                inline=False
+            )
+            
+            # Player 2 info
+            p2_health_bar = self.create_health_bar(fight_data["p2_hp"], p2_stats["hp"])
+            embed.add_field(
+                name=f"{p2_stats['icon']} {p2_name} (<@{fight_data['player2']}>)",
+                value=f"HP: {p2_health_bar} {fight_data['p2_hp']}/{p2_stats['hp']}",
+                inline=False
+            )
+            
+            # Show recent action if exists
+            if fight_log:
+                embed.add_field(
+                    name="⚡ Last Action",
+                    value=fight_log[-1],
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"💰 Winner takes: {self.bet_amount * 2:,}$ | Round {round_num}")
+            
+            # Send or update embed
+            if round_num == 1:
+                fight_message = await channel.send(embed=embed)
+            else:
+                await fight_message.edit(embed=embed)
+            
+            await asyncio.sleep(2.5)  # Pause between actions
+            
+            # Player 1 attacks Player 2
+            action_result = self.process_attack(fight_data, "p1", "p2", p1_stats, p2_stats, p1_name, p2_name)
+            fight_log.append(action_result["message"])
+            fight_data["p2_hp"] = action_result["defender_hp"]
+            
+            if fight_data["p2_hp"] <= 0:
+                break
+            
+            # Update with P1's attack
+            p2_health_bar = self.create_health_bar(fight_data["p2_hp"], p2_stats["hp"])
+            embed.set_field_at(
+                1,
+                name=f"{p2_stats['icon']} {p2_name} (<@{fight_data['player2']}>)",
+                value=f"HP: {p2_health_bar} {fight_data['p2_hp']}/{p2_stats['hp']}",
+                inline=False
+            )
+            embed.set_field_at(
+                2,
+                name="⚡ Last Action",
+                value=action_result["message"],
+                inline=False
+            )
+            await fight_message.edit(embed=embed)
+            await asyncio.sleep(2.5)
+            
+            # Player 2 attacks Player 1
+            action_result = self.process_attack(fight_data, "p2", "p1", p2_stats, p1_stats, p2_name, p1_name)
+            fight_log.append(action_result["message"])
+            fight_data["p1_hp"] = action_result["defender_hp"]
+            
+            round_num += 1
+        
+        # Determine winner
+        if fight_data["p1_hp"] > 0:
+            winner_id = fight_data["player1"]
+            winner_name = p1_name
+            winner_icon = p1_stats["icon"]
+            loser_id = fight_data["player2"]
+            loser_name = p2_name
+        else:
+            winner_id = fight_data["player2"]
+            winner_name = p2_name
+            winner_icon = p2_stats["icon"]
+            loser_id = fight_data["player1"]
+            loser_name = p1_name
+        
+        # Update balances
+        winner_data = get_user(winner_id)
+        loser_data = get_user(loser_id)
+        
+        # Winner gets both bets
+        new_winner_balance = winner_data[1] + self.bet_amount
+        new_loser_balance = loser_data[1] - self.bet_amount
+        
+        # Update winner
+        c.execute("UPDATE users SET balance = ?, gambled = gambled + ?, total_gambled = total_gambled + ? WHERE user_id = ?",
+                  (new_winner_balance, self.bet_amount, self.bet_amount, winner_id))
+        
+        # Update loser
+        c.execute("UPDATE users SET balance = ?, gambled = gambled + ?, total_gambled = total_gambled + ? WHERE user_id = ?",
+                  (new_loser_balance, self.bet_amount, self.bet_amount, loser_id))
+        
+        conn.commit()
+        
+        # Log transactions
+        log_transaction(winner_id, "gladiator_win", self.bet_amount, winner_data[1], new_winner_balance, 
+                       f"Won gladiator fight against {loser_name}")
+        log_transaction(loser_id, "gladiator_loss", self.bet_amount, loser_data[1], new_loser_balance,
+                       f"Lost gladiator fight against {winner_name}")
+        
+        # Log bet activity for fraud detection
+        log_bet_activity(winner_id, self.bet_amount, "gladiator", "win")
+        log_bet_activity(loser_id, self.bet_amount, "gladiator", "loss")
+        
+        # Create victory embed
+        victory_embed = discord.Embed(
+            title=f"🏆 {winner_icon} {winner_name} WINS!",
+            description=f"<@{winner_id}> is victorious in the arena!",
+            color=discord.Color.gold()
+        )
+        
+        victory_embed.add_field(name="💰 Winnings", value=f"+{self.bet_amount:,}$", inline=True)
+        victory_embed.add_field(name="💔 Loss", value=f"<@{loser_id}> lost {self.bet_amount:,}$", inline=True)
+        victory_embed.add_field(name="📊 Final Score", value=f"{winner_name}: {fight_data['p1_hp' if winner_id == fight_data['player1'] else 'p2_hp']} HP\n{loser_name}: 0 HP", inline=False)
+        victory_embed.set_footer(text="🔄 Click 'Next Round' for a rematch with the same gladiators!")
+        
+        # Enable next round button
+        for child in self.children:
+            if isinstance(child, Button) and "Next Round" in child.label:
+                child.disabled = False
+        
+        await fight_message.edit(embed=victory_embed, view=self)
+    
+    def process_attack(self, fight_data, attacker_key, defender_key, attacker_stats, defender_stats, attacker_name, defender_name):
+        """Process a single attack action."""
+        # Check for dodge
+        dodge_roll = random.randint(1, 100)
+        if dodge_roll <= defender_stats["dodge"]:
+            # Defender dodges - regenerate some HP
+            regen_amount = random.randint(5, 15)
+            max_hp = GLADIATORS[defender_name]["hp"]
+            old_hp = fight_data[f"{defender_key}_hp"]
+            fight_data[f"{defender_key}_hp"] = min(fight_data[f"{defender_key}_hp"] + regen_amount, max_hp)
+            actual_regen = fight_data[f"{defender_key}_hp"] - old_hp
+            
+            return {
+                "message": f"💨 **{defender_name} DODGED!** Agile movement regenerated {actual_regen} HP!",
+                "defender_hp": fight_data[f"{defender_key}_hp"]
+            }
+        
+        # Calculate base damage
+        base_damage = random.randint(attacker_stats["attack"][0], attacker_stats["attack"][1])
+        
+        # Check for block
+        block_roll = random.randint(1, 100)
+        if block_roll <= defender_stats["defense"]:
+            # Defender blocks - reduced damage and HP regen
+            reduced_damage = max(1, base_damage // 3)
+            regen_amount = random.randint(3, 10)
+            max_hp = GLADIATORS[defender_name]["hp"]
+            old_hp = fight_data[f"{defender_key}_hp"]
+            fight_data[f"{defender_key}_hp"] = min(fight_data[f"{defender_key}_hp"] - reduced_damage + regen_amount, max_hp)
+            actual_regen = (fight_data[f"{defender_key}_hp"] + reduced_damage) - old_hp
+            
+            return {
+                "message": f"🛡️ **{defender_name} BLOCKED!** Reduced damage to {reduced_damage} and regenerated {actual_regen} HP!",
+                "defender_hp": fight_data[f"{defender_key}_hp"]
+            }
+        
+        # Normal hit
+        fight_data[f"{defender_key}_hp"] -= base_damage
+        
+        # Determine hit quality
+        if base_damage >= attacker_stats["attack"][1] - 2:
+            hit_type = "💥 **CRITICAL HIT!**"
+        elif base_damage <= attacker_stats["attack"][0] + 2:
+            hit_type = "⚔️"
+        else:
+            hit_type = "⚔️ **SOLID HIT!**"
+        
+        return {
+            "message": f"{hit_type} {attacker_name} deals {base_damage} damage to {defender_name}!",
+            "defender_hp": fight_data[f"{defender_key}_hp"]
+        }
+    
+    def create_health_bar(self, current_hp, max_hp):
+        """Create a visual health bar."""
+        if current_hp <= 0:
+            return "💀 `░░░░░░░░░░` 0%"
+        
+        percentage = (current_hp / max_hp) * 100
+        filled = int(percentage / 10)
+        empty = 10 - filled
+        
+        if percentage >= 70:
+            color = "🟩"
+        elif percentage >= 40:
+            color = "🟨"
+        else:
+            color = "🟥"
+        
+        bar = "█" * filled + "░" * empty
+        
+        return f"{color} `{bar}` {percentage:.0f}%"
+
+@bot.command(name="fight")
+async def fight(ctx, opponent: discord.Member, amount: str):
+    """
+    Challenge another player to a gladiator fight!
+    
+    Usage: !fight @user <amount>
+    Example: !fight @John 50m
+    
+    Both players bet the same amount, winner takes all!
+    """
+    try:
+        # Parse amount
+        value = parse_money(amount)
+        if value is None:
+            await ctx.send("❌ Invalid amount format! Use formats like `10m`, `5k`, or `1000`")
+            return
+        
+        # Check if challenging yourself
+        if ctx.author.id == opponent.id:
+            await ctx.send("❌ You can't challenge yourself to a fight!")
+            return
+        
+        # Check if opponent is a bot
+        if opponent.bot:
+            await ctx.send("❌ You can't challenge bots to fights!")
+            return
+        
+        # Check minimum bet
+        if value < 1_000_000:
+            await ctx.send("❌ Minimum bet for gladiator fights is 1M!")
+            return
+        
+        # Get challenger's balance
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        if value > balance:
+            await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
+            return
+        
+        # Create unique challenge ID
+        challenge_id = f"{ctx.author.id}_{opponent.id}_{int(datetime.now().timestamp())}"
+        
+        # Store fight data
+        gladiator_fights[challenge_id] = {
+            "player1": ctx.author.id,
+            "player2": opponent.id,
+            "bet": value,
+            "accepted": False,
+            "p1_gladiator": None,
+            "p2_gladiator": None,
+            "p1_hp": 0,
+            "p2_hp": 0
+        }
+        
+        # Create challenge embed
+        embed = discord.Embed(
+            title="⚔️ Gladiator Fight Challenge!",
+            description=f"{ctx.author.mention} challenges {opponent.mention} to a gladiator duel!",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="💰 Wager", value=f"{value:,}$ each side", inline=True)
+        embed.add_field(name="🏆 Winner Takes", value=f"{value * 2:,}$", inline=True)
+        embed.add_field(name="🎮 How to Play", value="1. Accept the challenge\n2. Both pick a gladiator\n3. Watch the epic battle!\n4. Winner takes all!", inline=False)
+        embed.set_footer(text=f"{opponent.display_name}, click Accept or Decline below")
+        
+        # Create view
+        view = GladiatorConfirmView(ctx.author.id, opponent.id, value, challenge_id)
+        
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error creating fight challenge: {str(e)}")
+
+@bot.command(name="pick")
+async def pick_gladiator(ctx, *, gladiator_name: str):
+    """
+    Pick your gladiator for the fight.
+    
+    Usage: !pick <gladiator_name>
+    Example: !pick Maximus
+    """
+    try:
+        # Find user's active fight
+        user_fight = None
+        challenge_id = None
+        
+        for cid, fight_data in gladiator_fights.items():
+            if not fight_data["accepted"]:
+                continue
+            
+            if ctx.author.id == fight_data["player1"] and fight_data["p1_gladiator"] is None:
+                user_fight = fight_data
+                challenge_id = cid
+                player_key = "p1"
+                break
+            elif ctx.author.id == fight_data["player2"] and fight_data["p2_gladiator"] is None:
+                user_fight = fight_data
+                challenge_id = cid
+                player_key = "p2"
+                break
+        
+        if user_fight is None:
+            await ctx.send("❌ You don't have an active fight waiting for gladiator selection!")
+            return
+        
+        # Find gladiator (case-insensitive)
+        selected_gladiator = None
+        for name in GLADIATORS.keys():
+            if name.lower() == gladiator_name.lower():
+                selected_gladiator = name
+                break
+        
+        if selected_gladiator is None:
+            available = ", ".join(GLADIATORS.keys())
+            await ctx.send(f"❌ Unknown gladiator! Available fighters: {available}")
+            return
+        
+        # Assign gladiator
+        user_fight[f"{player_key}_gladiator"] = selected_gladiator
+        user_fight[f"{player_key}_hp"] = GLADIATORS[selected_gladiator]["hp"]
+        
+        glad_stats = GLADIATORS[selected_gladiator]
+        
+        # Send confirmation
+        embed = discord.Embed(
+            title=f"{glad_stats['icon']} Gladiator Selected!",
+            description=f"{ctx.author.mention} chose **{selected_gladiator}**!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="❤️ Health", value=str(glad_stats["hp"]), inline=True)
+        embed.add_field(name="⚔️ Attack", value=f"{glad_stats['attack'][0]}-{glad_stats['attack'][1]}", inline=True)
+        embed.add_field(name="🛡️ Defense", value=f"{glad_stats['defense']}%", inline=True)
+        embed.add_field(name="💨 Dodge", value=f"{glad_stats['dodge']}%", inline=True)
+        
+        # Check if both players have selected
+        if user_fight["p1_gladiator"] and user_fight["p2_gladiator"]:
+            embed.add_field(name="🎮 Fight Status", value="✅ **BOTH GLADIATORS READY!**\nStarting battle...", inline=False)
+            await ctx.send(embed=embed)
+            
+            # Start the fight!
+            await asyncio.sleep(2)
+            
+            # Create fight view
+            fight_view = GladiatorFightView(user_fight["player1"], user_fight["player2"], user_fight["bet"], challenge_id)
+            
+            # Run fight animation
+            await fight_view.run_fight_animation(ctx.channel, user_fight)
+        else:
+            waiting_player = "player1" if user_fight["p1_gladiator"] is None else "player2"
+            embed.add_field(name="⏳ Waiting", value=f"Waiting for <@{user_fight[waiting_player]}> to pick their gladiator...", inline=False)
+            await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error selecting gladiator: {str(e)}")
+
+# -----------------------------
 # 📜 RULES COMMAND
 # -----------------------------
 @bot.command(name="rules")
@@ -1903,6 +2414,24 @@ async def rules(ctx):
                 "**Your Winnings:** Bet amount × multiplier when you cash out\n"
                 "**Features:** Click 💵 Cash Out button to secure your winnings at any time!\n"
                 "**Risk:** If you don't cash out before the crash, you lose your entire bet\n"
+            ),
+            inline=False
+        )
+        
+        # Gladiator Fights
+        embed.add_field(
+            name="⚔️ Gladiator Fights",
+            value=(
+                "**Command:** `!fight @user <amount>` then `!pick <gladiator>`\n"
+                "**Example:** `!fight @John 50m` → `!pick Maximus`\n"
+                "**How to Play:** Challenge another player to a 1v1 gladiator duel! Both bet the same amount, winner takes all!\n"
+                "**Gladiators:** 8 unique fighters with different stats (HP, Attack, Defense, Dodge)\n"
+                "**Combat:** Turn-based with special mechanics:\n"
+                "  • 💨 Dodge: Avoid damage + regenerate 5-15 HP\n"
+                "  • 🛡️ Block: Reduce damage by 66% + regenerate 3-10 HP\n"
+                "  • ⚔️ Attack: Deal damage based on your gladiator's power\n"
+                "**Features:** Real-time animated combat, health bars, 🔄 rematch button\n"
+                "**Winner Takes All:** Winner gets both bets (2x your wager!)\n"
             ),
             inline=False
         )
