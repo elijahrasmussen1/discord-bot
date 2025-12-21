@@ -149,6 +149,10 @@ def parse_money(value: str) -> int:
     except (ValueError, AttributeError):
         return -1
 
+def format_money(value: int) -> str:
+    """Format integer money value with commas and $ sign."""
+    return f"{value:,}$"
+
 def is_owner(user):
     return user.id in OWNER_IDS
 
