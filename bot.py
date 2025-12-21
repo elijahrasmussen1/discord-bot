@@ -1634,7 +1634,7 @@ class CrashView(View):
                     break
                 
                 # Wait before next update (gets faster as multiplier increases)
-                wait_time = max(0.3, 1.0 - (self.current_multiplier - 1.0) * 0.05)
+                wait_time = max(0.8, 1.8 - (self.current_multiplier - 1.0) * 0.05)
                 await asyncio.sleep(wait_time)
                 
         except Exception as e:
