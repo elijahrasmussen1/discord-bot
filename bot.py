@@ -667,26 +667,30 @@ async def withdrawalpanel(ctx):
 @bot.command(name="assist")
 async def assist(ctx):
     embed = discord.Embed(title="📘 SAB Bot Assistance", color=discord.Color.blurple())
-    embed.add_field(name="👤 Member Commands", value=(
+    embed.add_field(name="👤 General Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!donate @user [amount]** - Donate balance to another player\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
         "**!leaderboards** (or **!lb**) - View the top 10 players leaderboard\n"
+        "**!games** - View all gambling game rules and info"
+    ), inline=False)
+    embed.add_field(name="🎮 Solo Gambling Games", value=(
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
         "**!pick [number]** - Pick your lucky number\n"
-        "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!blackjack [amount]** - Play Blackjack! Beat the dealer without going over 21\n"
-        "**!limbo [amount]** - Play Limbo! Above or below 50?\n"
+        "**!limbo [amount]** - Play Limbo! Above or below 50?"
+    ), inline=False)
+    embed.add_field(name="⚔️ PvP Games", value=(
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
+        "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
         "**!chop** - Take your turn chopping the tree\n"
         "**!wordchain @user [amount]** - Challenge a player to word chain!\n"
-        "**!word [your_word]** - Play your word in the chain\n"
-        "**!games** - View all gambling game rules and info"
-    ))
+        "**!word [your_word]** - Play your word in the chain"
+    ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
             "**!ticketpanel** - Send deposit ticket panel\n"
@@ -700,7 +704,7 @@ async def assist(ctx):
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
             "**!unstick** - Remove the sticky message from the current channel"
-        ))
+        ), inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="amount")
