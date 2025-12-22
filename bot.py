@@ -671,7 +671,7 @@ async def assist(ctx):
         "**!amount** - View your balance and remaining required gamble\n"
         "**!donate @user [amount]** - Donate balance to another player\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
-        "**!lb** - View the top 10 players leaderboard\n"
+        "**!leaderboards** (or **!lb**) - View the top 10 players leaderboard\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
@@ -1517,8 +1517,8 @@ async def resetgamblingall(ctx):
         await ctx.send(f"❌ Error resetting gambling statistics: {str(e)}")
         print(f"Error in resetgamblingall command: {e}")
 
-@bot.command(name="lb", aliases=["leaderboard"])
-async def leaderboard(ctx):
+@bot.command(name="leaderboards", aliases=["lb"])
+async def leaderboards(ctx):
     """Display the top 10 players by balance for competitive ranking."""
     try:
         # Get top 10 players by balance
@@ -2261,26 +2261,26 @@ async def crash(ctx, amount: str = None):
             await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
             return
         
-        # Generate random crash point with proper house edge
-        # Fair distribution that prevents exploitation while keeping it fun
+        # Generate random crash point with MUCH higher house edge
+        # Heavily weighted toward early crashes - much harder to win
         import random
         rand = random.random()
         
-        if rand < 0.40:
-            # 40% chance: crash between 1.2x and 1.8x (most common)
-            crash_point = round(random.uniform(1.2, 1.8), 2)
-        elif rand < 0.65:
-            # 25% chance: crash between 1.8x and 2.5x
-            crash_point = round(random.uniform(1.8, 2.5), 2)
-        elif rand < 0.82:
-            # 17% chance: crash between 2.5x and 4.0x
-            crash_point = round(random.uniform(2.5, 4.0), 2)
-        elif rand < 0.92:
-            # 10% chance: crash between 4.0x and 8.0x
-            crash_point = round(random.uniform(4.0, 8.0), 2)
+        if rand < 0.55:
+            # 55% chance: crash between 1.15x and 1.5x (very early crash)
+            crash_point = round(random.uniform(1.15, 1.5), 2)
+        elif rand < 0.78:
+            # 23% chance: crash between 1.5x and 2.0x
+            crash_point = round(random.uniform(1.5, 2.0), 2)
+        elif rand < 0.90:
+            # 12% chance: crash between 2.0x and 3.0x
+            crash_point = round(random.uniform(2.0, 3.0), 2)
+        elif rand < 0.97:
+            # 7% chance: crash between 3.0x and 5.0x
+            crash_point = round(random.uniform(3.0, 5.0), 2)
         else:
-            # 8% chance: crash between 8.0x and 30.0x (rare jackpot)
-            crash_point = round(random.uniform(8.0, 30.0), 2)
+            # 3% chance: crash between 5.0x and 10.0x (rare)
+            crash_point = round(random.uniform(5.0, 10.0), 2)
         
         # Create initial embed
         embed = discord.Embed(
