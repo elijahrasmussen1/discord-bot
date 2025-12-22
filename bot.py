@@ -669,6 +669,7 @@ async def assist(ctx):
     embed = discord.Embed(title="📘 SAB Bot Assistance", color=discord.Color.blurple())
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
+        "**!donate @user [amount]** - Donate balance to another player\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
         "**!lb** - View the top 10 players leaderboard\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
@@ -711,6 +712,112 @@ async def amount(ctx):
         await ctx.send(f"💰 **Your Gambling Amount**\nBalance: `{bal:,}$`\nRequired Gamble: `{req:,}$`\nRemaining: `{remaining:,}$`")
     except Exception as e:
         await ctx.send(f"❌ Error fetching your balance: {str(e)}")
+
+@bot.command(name="donate")
+async def donate(ctx, user: discord.Member = None, amount: str = None):
+    """Donate balance to another user."""
+    if user is None or amount is None:
+        await ctx.send("❌ Usage: `!donate @user <amount>`")
+        return
+    
+    # Can't donate to yourself
+    if user.id == ctx.author.id:
+        await ctx.send("❌ You cannot donate to yourself!")
+        return
+    
+    # Can't donate to bots
+    if user.bot:
+        await ctx.send("❌ You cannot donate to bots!")
+        return
+    
+    try:
+        # Parse donation amount
+        value = parse_money(amount)
+        
+        # Minimum donation amount
+        if value < 1000000:  # 1M minimum
+            await ctx.send("❌ Minimum donation amount is 1,000,000$")
+            return
+        
+        # Get donor's balance
+        donor_id, donor_bal, donor_req, donor_gambled, _, _ = get_user(ctx.author.id)
+        
+        # Check if donor has enough balance
+        if donor_bal < value:
+            await ctx.send(f"❌ Insufficient balance! You have {donor_bal:,}$ but tried to donate {value:,}$")
+            return
+        
+        # Get recipient's info
+        recipient_id, recipient_bal, recipient_req, recipient_gambled, _, _ = get_user(user.id)
+        
+        # Perform the transaction
+        # Deduct from donor
+        update_balance(ctx.author.id, -value)
+        
+        # Add to recipient
+        update_balance(user.id, value)
+        
+        # Get updated balances
+        _, donor_new_bal, _, _, _, _ = get_user(ctx.author.id)
+        _, recipient_new_bal, _, _, _, _ = get_user(user.id)
+        
+        # Log transaction for donor
+        await log_transaction(
+            ctx.author.id,
+            "DONATION_SENT",
+            value,
+            donor_bal,
+            donor_new_bal,
+            f"Donated to {user.name} ({user.id})"
+        )
+        
+        # Log transaction for recipient
+        await log_transaction(
+            user.id,
+            "DONATION_RECEIVED",
+            value,
+            recipient_bal,
+            recipient_new_bal,
+            f"Received from {ctx.author.name} ({ctx.author.id})"
+        )
+        
+        # Log to audit channel
+        await log_user_activity(
+            bot,
+            ctx.author,
+            "Donation Sent",
+            f"Amount: {value:,}$\nRecipient: {user.mention}\nDonor Balance: {donor_bal:,}$ → {donor_new_bal:,}$\nRecipient Balance: {recipient_bal:,}$ → {recipient_new_bal:,}$"
+        )
+        
+        # Success message
+        embed = discord.Embed(
+            title="💝 Donation Successful!",
+            description=f"{ctx.author.mention} donated **{value:,}$** to {user.mention}",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="📤 Your New Balance", value=f"{donor_new_bal:,}$", inline=True)
+        embed.add_field(name="📥 Recipient's New Balance", value=f"{recipient_new_bal:,}$", inline=True)
+        embed.set_footer(text="Thank you for your generosity!")
+        
+        await ctx.send(embed=embed)
+        
+        # Notify recipient
+        try:
+            recipient_embed = discord.Embed(
+                title="💰 You Received a Donation!",
+                description=f"{ctx.author.mention} donated **{value:,}$** to you!",
+                color=discord.Color.gold()
+            )
+            recipient_embed.add_field(name="Your New Balance", value=f"{recipient_new_bal:,}$", inline=False)
+            await user.send(embed=recipient_embed)
+        except:
+            # If DM fails, that's okay
+            pass
+            
+    except ValueError:
+        await ctx.send("❌ Invalid amount format! Use formats like: `10m`, `1.5m`, `500k`, or `1000000`")
+    except Exception as e:
+        await ctx.send(f"❌ Error processing donation: {str(e)}")
 
 @bot.command(name="withdraw")
 async def withdraw(ctx):
