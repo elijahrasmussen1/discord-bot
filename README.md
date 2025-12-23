@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS tickets (
     ticket_number INTEGER
 )
 """)
+c.execute("""
+CREATE TABLE IF NOT EXISTS pets (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    account TEXT NOT NULL
+)
+""")
 conn.commit()
 
 # -----------------------------
@@ -276,7 +283,9 @@ async def assist(ctx):
             "**!deposit @user amount** - Add gambling amount to a user\n"
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
-            "**!wipeamount @user** - Wipe a user's balance"
+            "**!wipeamount @user** - Wipe a user's balance\n"
+            "**!trackpet <pet_id>** - Look up a pet by ID\n"
+            "**!petids** - List all pets in stock"
         ))
     await ctx.send(embed=embed)
 
@@ -406,6 +415,78 @@ async def wipeamount(ctx, user: discord.Member):
     c.execute("UPDATE users SET balance=0, required_gamble=0, gambled=0 WHERE user_id=?", (user.id,))
     conn.commit()
     await ctx.send(f"✅ {user.mention}'s balance wiped.")
+
+@bot.command(name="trackpet")
+async def trackpet(ctx, pet_id: int = None):
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only owners can use this.")
+        return
+    if pet_id is None:
+        await ctx.send("❌ Usage: `!trackpet <pet_id>`")
+        return
+    c.execute("SELECT name, account FROM pets WHERE id=?", (pet_id,))
+    result = c.fetchone()
+    if result is None:
+        await ctx.send(f"❌ Pet with ID {pet_id} not found.")
+        return
+    name, account = result
+    await ctx.send(f"🐾 **Pet ID {pet_id}:** {name} is in **{account}**")
+
+@bot.command(name="petids")
+async def petids(ctx):
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only owners can use this.")
+        return
+    c.execute("SELECT id, name, account FROM pets ORDER BY id")
+    pets = c.fetchall()
+    if not pets:
+        await ctx.send("📦 No pets currently in stock.")
+        return
+    
+    embed = discord.Embed(
+        title="🐾 Pets in Stock",
+        color=discord.Color.purple()
+    )
+    
+    # Add pets to embed, handling pagination if needed
+    description_lines = []
+    for pet_id, name, account in pets:
+        description_lines.append(f"**Pet ID {pet_id}:** {name} | Account: {account}")
+    
+    # Discord embed description limit is 4096 characters
+    description = "\n".join(description_lines)
+    if len(description) > 4096:
+        # Split into multiple embeds if too large
+        chunks = []
+        current_chunk = []
+        current_length = 0
+        for line in description_lines:
+            line_length = len(line) + 1  # +1 for newline
+            if current_length + line_length > 4096:
+                chunks.append("\n".join(current_chunk))
+                current_chunk = [line]
+                current_length = line_length
+            else:
+                current_chunk.append(line)
+                current_length += line_length
+        if current_chunk:
+            chunks.append("\n".join(current_chunk))
+        
+        # Send first embed with title
+        embed.description = chunks[0]
+        await ctx.send(embed=embed)
+        
+        # Send remaining chunks as continuation embeds
+        for i, chunk in enumerate(chunks[1:], 2):
+            continuation_embed = discord.Embed(
+                title=f"🐾 Pets in Stock (continued {i})",
+                description=chunk,
+                color=discord.Color.purple()
+            )
+            await ctx.send(embed=continuation_embed)
+    else:
+        embed.description = description
+        await ctx.send(embed=embed)
 
 # -----------------------------
 # BOT READY
