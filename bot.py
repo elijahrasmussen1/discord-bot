@@ -1290,25 +1290,24 @@ class FlipChaseView(View):
                 await interaction.followup.send(f"❌ Critical error banking winnings: {str(e)}\nPlease contact an admin with your game details.", ephemeral=True)
     
     async def on_timeout(self):
-        """Called when the view times out - refund the current winnings ONLY if game was not resolved."""
+        """Called when the view times out - refund ONLY the initial bet if game was not resolved."""
         try:
             # Only refund if the game was not already resolved (banked or lost)
             if self.game_resolved:
                 print(f"⏰ FlipChase timeout: Game already resolved for user {self.user_id}, no refund needed")
                 return
             
-            # Get user data and refund their current winnings
+            # Get user data and refund their INITIAL BET only (not winnings)
             user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
             
-            # Add current winnings to balance (including original bet)
-            balance += self.current_winnings
-            gambled += self.initial_bet
-            total_gambled += self.initial_bet
+            # Only refund the initial bet (player forfeits potential winnings on timeout)
+            balance += self.initial_bet
+            # Do NOT add to gambled stats since they timed out without completing the game
             
             # Update database
             c.execute(
-                "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
-                (balance, gambled, total_gambled, self.user_id)
+                "UPDATE users SET balance=? WHERE user_id=?",
+                (balance, self.user_id)
             )
             conn.commit()
             
@@ -1316,7 +1315,7 @@ class FlipChaseView(View):
             if self.user_id in active_flip_chase:
                 del active_flip_chase[self.user_id]
                 
-            print(f"⏰ FlipChase timeout: Refunded {format_money(self.current_winnings)} to user {self.user_id}")
+            print(f"⏰ FlipChase timeout: Refunded initial bet {format_money(self.initial_bet)} to user {self.user_id} (forfeited {format_money(self.current_winnings - self.initial_bet)} in winnings)")
         except Exception as e:
             print(f"❌ Error in FlipChase timeout handler: {str(e)}")
             item.disabled = True
