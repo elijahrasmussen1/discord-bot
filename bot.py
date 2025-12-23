@@ -5142,6 +5142,8 @@ async def before_deposit_stats():
 # -----------------------------
 # Global variable to track stock message
 stock_message_id = None
+# Global dictionary to track each user's current page
+user_stock_pages = {}
 
 class StockView(discord.ui.View):
     """View for paginated stock/inventory display."""
@@ -5240,25 +5242,61 @@ class StockView(discord.ui.View):
     
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary, custom_id="stock_prev")
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Go to previous page."""
-        await self.update_pages()  # Refresh data
-        if not self.pages:
+        """Go to previous page - shows ephemeral response to user."""
+        global user_stock_pages
+        
+        # Create a temporary view instance for this user
+        temp_view = StockView(user_id=interaction.user.id)
+        await temp_view.update_pages()
+        
+        if not temp_view.pages:
             await interaction.response.send_message("❌ No stock items available.", ephemeral=True)
             return
-            
-        self.current_page = (self.current_page - 1) % len(self.pages)
-        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+        
+        # Get or initialize user's current page
+        user_id = interaction.user.id
+        if user_id not in user_stock_pages:
+            user_stock_pages[user_id] = 0
+        
+        # Move to previous page
+        user_stock_pages[user_id] = (user_stock_pages[user_id] - 1) % len(temp_view.pages)
+        current_page = user_stock_pages[user_id]
+        
+        # Send ephemeral response with the user's personal page
+        await interaction.response.send_message(
+            embed=temp_view.pages[current_page], 
+            view=temp_view,
+            ephemeral=True
+        )
     
     @discord.ui.button(label=">", style=discord.ButtonStyle.primary, custom_id="stock_next")
     async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Go to next page."""
-        await self.update_pages()  # Refresh data
-        if not self.pages:
+        """Go to next page - shows ephemeral response to user."""
+        global user_stock_pages
+        
+        # Create a temporary view instance for this user
+        temp_view = StockView(user_id=interaction.user.id)
+        await temp_view.update_pages()
+        
+        if not temp_view.pages:
             await interaction.response.send_message("❌ No stock items available.", ephemeral=True)
             return
-            
-        self.current_page = (self.current_page + 1) % len(self.pages)
-        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+        
+        # Get or initialize user's current page
+        user_id = interaction.user.id
+        if user_id not in user_stock_pages:
+            user_stock_pages[user_id] = 0
+        
+        # Move to next page
+        user_stock_pages[user_id] = (user_stock_pages[user_id] + 1) % len(temp_view.pages)
+        current_page = user_stock_pages[user_id]
+        
+        # Send ephemeral response with the user's personal page
+        await interaction.response.send_message(
+            embed=temp_view.pages[current_page], 
+            view=temp_view,
+            ephemeral=True
+        )
 
 
 @bot.command(name="addstock")
