@@ -809,15 +809,15 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         _, donor_new_bal, _, _, _, _ = get_user(ctx.author.id)
         _, recipient_new_bal, _, _, _, _ = get_user(user.id)
         
-        # Verify transaction integrity
+        # Verify transaction integrity for BOTH donor and recipient
         expected_donor_bal = donor_bal - value
         expected_recipient_bal = recipient_bal + value
         
-        if donor_new_bal != expected_donor_bal:
+        if donor_new_bal != expected_donor_bal or recipient_new_bal != expected_recipient_bal:
             # Rollback by reversing operations
             update_balance(ctx.author.id, value)
             update_balance(user.id, -value)
-            await ctx.send("❌ Transaction failed verification. Operation rolled back.")
+            await ctx.send(f"❌ Transaction failed verification. Operation rolled back.\nExpected: Donor={expected_donor_bal:,}, Recipient={expected_recipient_bal:,}\nActual: Donor={donor_new_bal:,}, Recipient={recipient_new_bal:,}")
             return
         
         # Set cooldown after successful transaction
@@ -1223,6 +1223,9 @@ class FlipChaseView(View):
             # Double winnings and offer to chase again
             self.current_winnings *= 2
             self.rounds_won += 1
+            
+            # Mark this view as resolved since we're creating a new one
+            self.game_resolved = True
             
             embed = discord.Embed(
                 title="🎉 Chase Successful!",
