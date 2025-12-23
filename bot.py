@@ -115,15 +115,6 @@ CREATE TABLE IF NOT EXISTS stock_items (
 )
 """)
 
-# Pet tracking table (simpler than stock_items for quick ID-based lookups)
-c.execute("""
-CREATE TABLE IF NOT EXISTS pets (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    account TEXT NOT NULL
-)
-""")
-
 conn.commit()
 
 # Database migration: Add missing columns if they don't exist
@@ -1898,30 +1889,34 @@ async def wipeamount(ctx, user: discord.Member = None):
 
 @bot.command(name="trackpet")
 async def trackpet(ctx, pet_id=None):
-    """Owner command to look up a pet by its ID."""
+    """Owner command to look up a pet by its ID from stock."""
     if not is_owner(ctx.author):
         await ctx.send("❌ Only owners can use this.")
         return
     
     if pet_id is None:
-        await ctx.send("❌ Usage: `!trackpet <pet_id>`")
+        await ctx.send("❌ Usage: `!trackpet <pet_id>` or `!trackpet #<pet_id>`")
         return
     
     try:
+        # Handle both formats: "7" and "#7"
+        pet_id_str = str(pet_id).lstrip('#')
+        
         # Convert pet_id to integer
         try:
-            pet_id_int = int(pet_id)
+            pet_id_int = int(pet_id_str)
         except (ValueError, TypeError):
             await ctx.send(f"❌ Invalid pet ID. Please provide a valid number.")
             return
         
-        c.execute("SELECT name, account FROM pets WHERE id=?", (pet_id_int,))
+        # Query stock_items table for the pet
+        c.execute("SELECT pet_name, account_stored FROM stock_items WHERE id=?", (pet_id_int,))
         result = c.fetchone()
         if result is None:
-            await ctx.send(f"❌ Pet with ID {pet_id_int} not found.")
+            await ctx.send(f"❌ Pet with ID #{pet_id_int} not found in stock.")
             return
-        name, account = result
-        await ctx.send(f"🐾 **Pet ID {pet_id_int}:** {name} is in **{account}**")
+        pet_name, account = result
+        await ctx.send(f"🐾 **Pet ID #{pet_id_int}:** {pet_name} is in **{account}**")
     except Exception as e:
         await ctx.send(f"❌ Error tracking pet: {str(e)}")
 
@@ -1933,7 +1928,8 @@ async def petids(ctx):
         return
     
     try:
-        c.execute("SELECT id, name, account FROM pets ORDER BY id")
+        # Query stock_items table for all pets
+        c.execute("SELECT id, pet_name, account_stored FROM stock_items ORDER BY id")
         pets = c.fetchall()
         if not pets:
             await ctx.send("📦 No pets currently in stock.")
@@ -1946,8 +1942,8 @@ async def petids(ctx):
         
         # Add pets to embed, handling pagination if needed
         description_lines = []
-        for pet_id, name, account in pets:
-            description_lines.append(f"**Pet ID {pet_id}:** {name} | Account: {account}")
+        for pet_id, pet_name, account in pets:
+            description_lines.append(f"**Pet ID #{pet_id}:** {pet_name} | Account: {account}")
         
         # Discord embed description limit is 4096 characters
         description = "\n".join(description_lines)
