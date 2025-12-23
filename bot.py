@@ -969,6 +969,41 @@ class CoinflipStartView(View):
                 
         except Exception as e:
             await interaction.response.send_message(f"❌ Error during coinflip: {str(e)}", ephemeral=True)
+    
+    @discord.ui.button(label="End Game", style=discord.ButtonStyle.red, emoji="💰")
+    async def end_game(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Cash out and end the game without flipping."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your coinflip game!", ephemeral=True)
+            return
+        
+        try:
+            # Get user data
+            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            
+            # Return the bet to the player
+            balance += self.amount
+            c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, self.user_id))
+            conn.commit()
+            
+            # Create cashout embed
+            embed = discord.Embed(
+                title="💰 Coinflip Ended!",
+                description=f"You cashed out before flipping!",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Returned Amount", value=f"{format_money(self.amount)}", inline=True)
+            embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
+            embed.set_footer(text="Your bet has been returned to your balance.")
+            
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+            # Remove from active games
+            if self.user_id in active_coinflip:
+                del active_coinflip[self.user_id]
+                
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error ending game: {str(e)}", ephemeral=True)
 
 class CoinflipAgainView(View):
     """View for flipping again with the same bet and choice."""
