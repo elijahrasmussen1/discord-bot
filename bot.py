@@ -675,6 +675,7 @@ async def assist(ctx):
         "**!games** - View all gambling game rules and info"
     ), inline=False)
     embed.add_field(name="🎮 Solo Gambling Games", value=(
+        "**!cf [amount] [heads/tails]** - Simple coinflip! Bet on heads or tails\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
@@ -862,6 +863,241 @@ async def withdraw(ctx):
         
     except Exception as e:
         await ctx.send(f"❌ Error processing withdrawal request: {str(e)}")
+
+# -----------------------------
+# 🪙 COINFLIP GAMBLING GAME
+# -----------------------------
+# Global dictionary to track active coinflip games
+active_coinflip = {}
+
+class CoinflipStartView(View):
+    """View for starting a coinflip game."""
+    
+    def __init__(self, user_id, amount, choice):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.amount = amount
+        self.choice = choice  # "heads" or "tails"
+    
+    @discord.ui.button(label="Start CF", style=discord.ButtonStyle.green, emoji="🪙")
+    async def start_cf(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Start the coinflip game."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your coinflip game!", ephemeral=True)
+            return
+        
+        try:
+            # Perform the flip
+            outcome = random.choice(["heads", "tails"])
+            won = self.choice == outcome
+            
+            # Get user data
+            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            
+            if won:
+                # Player won
+                winnings = int(self.amount * 1.95)  # 1.95x payout (5% house edge)
+                balance += winnings
+                gambled += self.amount
+                total_gambled += self.amount
+                
+                # Update database
+                c.execute(
+                    "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                    (balance, gambled, total_gambled, self.user_id)
+                )
+                conn.commit()
+                
+                # Log the win
+                await log_bet_activity(self.user_id, self.amount, "coinflip", "win")
+                
+                remaining = max(required_gamble - gambled, 0)
+                
+                # Create win embed
+                embed = discord.Embed(
+                    title="🎉 Coinflip Won!",
+                    description=f"**You won!** The coin landed on **{outcome}**!",
+                    color=discord.Color.green()
+                )
+                embed.add_field(name="Your Choice", value=f"**{self.choice.upper()}**", inline=True)
+                embed.add_field(name="Result", value=f"**{outcome.upper()}**", inline=True)
+                embed.add_field(name="Winnings", value=f"{format_money(winnings)}", inline=True)
+                embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
+                embed.add_field(name="Bet Amount", value=f"{format_money(self.amount)}", inline=True)
+                embed.add_field(name="Remaining Required", value=f"{format_money(remaining)}", inline=True)
+                
+                # Add flip again button
+                view = CoinflipAgainView(self.user_id, self.amount, self.choice)
+                await interaction.response.edit_message(embed=embed, view=view)
+            else:
+                # Player lost
+                gambled += self.amount
+                total_gambled += self.amount
+                
+                # Update database
+                c.execute(
+                    "UPDATE users SET gambled=?, total_gambled=? WHERE user_id=?",
+                    (gambled, total_gambled, self.user_id)
+                )
+                conn.commit()
+                
+                # Log the loss
+                await log_bet_activity(self.user_id, self.amount, "coinflip", "loss")
+                
+                remaining = max(required_gamble - gambled, 0)
+                
+                # Create loss embed
+                embed = discord.Embed(
+                    title="💀 Coinflip Lost!",
+                    description=f"**You lost!** The coin landed on **{outcome}**.",
+                    color=discord.Color.red()
+                )
+                embed.add_field(name="Your Choice", value=f"**{self.choice.upper()}**", inline=True)
+                embed.add_field(name="Result", value=f"**{outcome.upper()}**", inline=True)
+                embed.add_field(name="Lost Amount", value=f"{format_money(self.amount)}", inline=True)
+                embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
+                embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
+                embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
+                
+                # Add flip again button
+                view = CoinflipAgainView(self.user_id, self.amount, self.choice)
+                await interaction.response.edit_message(embed=embed, view=view)
+            
+            # Remove from active games
+            if self.user_id in active_coinflip:
+                del active_coinflip[self.user_id]
+                
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error during coinflip: {str(e)}", ephemeral=True)
+
+class CoinflipAgainView(View):
+    """View for flipping again with the same bet and choice."""
+    
+    def __init__(self, user_id, amount, choice):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.amount = amount
+        self.choice = choice
+    
+    @discord.ui.button(label="Flip Again", style=discord.ButtonStyle.blurple, emoji="🔄")
+    async def flip_again(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Flip again with the same bet and choice."""
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This is not your coinflip game!", ephemeral=True)
+            return
+        
+        try:
+            # Get user data
+            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            
+            # Check if user has enough balance
+            if balance < self.amount:
+                await interaction.response.send_message("❌ You don't have enough balance to flip again!", ephemeral=True)
+                return
+            
+            # Deduct bet
+            balance -= self.amount
+            c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, self.user_id))
+            conn.commit()
+            
+            # Create new start view
+            embed = discord.Embed(
+                title="🪙 Coinflip Ready!",
+                description=f"**Your Choice:** {self.choice.upper()}\n\n⚠️ Using the flip again button will use the same side of the coin you originally picked.",
+                color=discord.Color.blue()
+            )
+            embed.add_field(name="Bet Amount", value=f"{format_money(self.amount)}", inline=True)
+            embed.add_field(name="Potential Win", value=f"{format_money(int(self.amount * 1.95))}", inline=True)
+            embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
+            embed.set_footer(text="Click 'Start CF' to flip the coin!")
+            
+            view = CoinflipStartView(self.user_id, self.amount, self.choice)
+            await interaction.response.edit_message(embed=embed, view=view)
+            
+            # Mark as active
+            active_coinflip[self.user_id] = True
+            
+        except Exception as e:
+            await interaction.response.send_message(f"❌ Error flipping again: {str(e)}", ephemeral=True)
+
+@bot.command(name="cf")
+async def coinflip(ctx, amount: str = None, choice: str = None):
+    """Simple coinflip game - bet on heads or tails!"""
+    try:
+        if amount is None or choice is None:
+            await ctx.send("❌ Usage: `!cf <amount> <heads/tails>`\nExample: `!cf 200m heads`")
+            return
+        
+        # Validate choice
+        choice = choice.lower()
+        if choice not in ["heads", "tails"]:
+            await ctx.send("❌ Invalid choice! Use `heads` or `tails`.")
+            return
+        
+        # Check if user already has an active coinflip
+        if ctx.author.id in active_coinflip:
+            await ctx.send("❌ You already have an active coinflip game!")
+            return
+        
+        value = parse_money(amount)
+        if value <= 0:
+            await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+            return
+        
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        
+        if value > balance:
+            await ctx.send("❌ You cannot gamble more than your balance.")
+            return
+        
+        # Minimum bet
+        if value < 1000000:  # 1M minimum
+            await ctx.send("❌ Minimum bet is 1,000,000$!")
+            return
+        
+        # Check for rapid betting (fraud detection)
+        is_rapid = await check_rapid_betting(ctx.author.id)
+        if is_rapid:
+            await send_fraud_alert(
+                bot,
+                ctx.author,
+                "Rapid Betting Detected",
+                f"User placed {RAPID_BET_THRESHOLD}+ bets in 60 seconds\nBet Amount: {value:,}$\nGame: Coinflip"
+            )
+        
+        # Check for high bet (fraud detection)
+        if value >= HIGH_BET_THRESHOLD:
+            await log_user_activity(
+                bot,
+                ctx.author,
+                "High Value Bet",
+                f"Amount: {value:,}$\nGame: Coinflip\nBalance: {balance:,}$"
+            )
+        
+        # Deduct initial bet from balance
+        balance -= value
+        c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, ctx.author.id))
+        conn.commit()
+        
+        # Mark as active
+        active_coinflip[ctx.author.id] = True
+        
+        # Create embed
+        embed = discord.Embed(
+            title="🪙 Coinflip Ready!",
+            description=f"**Your Choice:** {choice.upper()}\n\n⚠️ Using the flip again button will use the same side of the coin you originally picked.",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="Bet Amount", value=f"{format_money(value)}", inline=True)
+        embed.add_field(name="Potential Win", value=f"{format_money(int(value * 1.95))}", inline=True)
+        embed.add_field(name="Your Balance", value=f"{format_money(balance)}", inline=True)
+        embed.set_footer(text="Click 'Start CF' to flip the coin!")
+        
+        view = CoinflipStartView(ctx.author.id, value, choice)
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error starting coinflip: {str(e)}")
 
 # -----------------------------
 # ✅ FLIP & CHASE GAMBLING GAME
@@ -4222,7 +4458,51 @@ class GamesView(discord.ui.View):
         """Create all game information pages."""
         pages = []
         
-        # Page 1: Flip & Chase
+        # Page 1: Coinflip
+        embed0 = discord.Embed(
+            title="🪙 Coinflip",
+            description="**Simple heads or tails - Classic coinflip betting!**",
+            color=discord.Color.gold()
+        )
+        embed0.add_field(
+            name="📋 Command",
+            value="`!cf <amount> <heads/tails>`",
+            inline=False
+        )
+        embed0.add_field(
+            name="💡 Example",
+            value="`!cf 200m heads`",
+            inline=False
+        )
+        embed0.add_field(
+            name="🎮 How to Play",
+            value="1. Bet an amount and choose heads or tails\n2. Click **Start CF** to flip the coin\n3. Win if the coin lands on your choice!\n4. Click **Flip Again** to replay with same bet and choice",
+            inline=False
+        )
+        embed0.add_field(
+            name="💰 Payout",
+            value="**Win**: 1.95x your bet (5% house edge)",
+            inline=True
+        )
+        embed0.add_field(
+            name="🎯 Win Chance",
+            value="**50%** - Fair odds!",
+            inline=True
+        )
+        embed0.add_field(
+            name="✨ Features",
+            value="• **Start CF** button to begin\n• **Flip Again** button to replay with same side\n• Simple, fast gameplay\n• Fair 50/50 odds",
+            inline=False
+        )
+        embed0.add_field(
+            name="⚠️ Note",
+            value="Using the flip again button will use the same side of the coin you originally picked!",
+            inline=False
+        )
+        embed0.set_footer(text="Page 1/11 • Use the buttons below to see other games")
+        pages.append(embed0)
+        
+        # Page 2: Flip & Chase
         embed1 = discord.Embed(
             title="🎲 Flip & Chase",
             description="**Progressive double-or-nothing game - Chase for bigger wins or bank anytime!**",
@@ -4258,7 +4538,7 @@ class GamesView(discord.ui.View):
             value="Losing ANY round means you lose ALL winnings! Bank wisely.",
             inline=False
         )
-        embed1.set_footer(text="Page 1/10 • Use the buttons below to see other games")
+        embed1.set_footer(text="Page 2/11 • Use the buttons below to see other games")
         pages.append(embed1)
         
         # Page 2: Slots
@@ -4300,7 +4580,7 @@ class GamesView(discord.ui.View):
             value="Click 🔄 **Spin Again** to replay with same bet!",
             inline=False
         )
-        embed2.set_footer(text="Page 2/10 • Use the buttons below to see other games")
+        embed2.set_footer(text="Page 3/11 • Use the buttons below to see other games")
         pages.append(embed2)
         
         # Page 3: Lucky Number
@@ -4345,7 +4625,7 @@ class GamesView(discord.ui.View):
             value="Higher ranges = bigger multipliers but lower win chance!",
             inline=False
         )
-        embed3.set_footer(text="Page 3/10 • Use the buttons below to see other games")
+        embed3.set_footer(text="Page 4/11 • Use the buttons below to see other games")
         pages.append(embed3)
         
         # Page 4: Crash
@@ -4400,7 +4680,7 @@ class GamesView(discord.ui.View):
             value="If you don't cash out before the crash, you lose your entire bet",
             inline=False
         )
-        embed4.set_footer(text="Page 4/10 • Use the buttons below to see other games")
+        embed4.set_footer(text="Page 5/11 • Use the buttons below to see other games")
         pages.append(embed4)
         
         # Page 5: Blackjack
@@ -4461,7 +4741,7 @@ class GamesView(discord.ui.View):
             value="Professional embeds, interactive buttons, real-time gameplay!",
             inline=False
         )
-        embed5.set_footer(text="Page 5/10 • Use the buttons below to see other games")
+        embed5.set_footer(text="Page 6/11 • Use the buttons below to see other games")
         pages.append(embed5)
         
         # Page 6: Gladiator Fights
@@ -4512,7 +4792,7 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed6.set_footer(text="Page 6/10 • Use the buttons below to see other games")
+        embed6.set_footer(text="Page 7/11 • Use the buttons below to see other games")
         pages.append(embed6)
         
         # Page 7: Risky Lumberjack
@@ -4563,7 +4843,7 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed7.set_footer(text="Page 7/10 • Use the buttons below to see other games")
+        embed7.set_footer(text="Page 8/11 • Use the buttons below to see other games")
         pages.append(embed7)
         
         # Page 8: Word Chain
@@ -4602,7 +4882,7 @@ class GamesView(discord.ui.View):
             value="• Only letters allowed in words\n• 30-second time limit per turn\n• Play must continue in the same channel\n• Case doesn't matter",
             inline=False
         )
-        embed8.set_footer(text="Page 8/10 • Use the buttons below to see other games")
+        embed8.set_footer(text="Page 9/11 • Use the buttons below to see other games")
         pages.append(embed8)
         
         # Page 9: Limbo
@@ -4652,7 +4932,7 @@ class GamesView(discord.ui.View):
             value="50 is neither above nor below - rolling exactly 50 counts as a loss for both choices!",
             inline=False
         )
-        embed9.set_footer(text="Page 9/10 • Use the buttons below to see other games")
+        embed9.set_footer(text="Page 10/11 • Use the buttons below to see other games")
         pages.append(embed9)
         
         # Page 10: General Rules
@@ -4691,7 +4971,7 @@ class GamesView(discord.ui.View):
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed10.set_footer(text="Page 10/10 • Use the buttons below to see other games")
+        embed10.set_footer(text="Page 11/11 • Use the buttons below to see other games")
         pages.append(embed10)
         
         return pages
