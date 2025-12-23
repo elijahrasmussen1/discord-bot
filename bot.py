@@ -893,7 +893,7 @@ class CoinflipStartView(View):
     """View for starting a coinflip game."""
     
     def __init__(self, user_id, amount, choice):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)  # Increased from 60 to 120 seconds
         self.user_id = user_id
         self.amount = amount
         self.choice = choice  # "heads" or "tails"
@@ -1028,7 +1028,7 @@ class CoinflipAgainView(View):
     """View for flipping again with the same bet and choice."""
     
     def __init__(self, user_id, amount, choice):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)  # Increased from 60 to 120 seconds
         self.user_id = user_id
         self.amount = amount
         self.choice = choice
@@ -1156,7 +1156,7 @@ active_flip_chase = {}
 
 class FlipChaseView(View):
     def __init__(self, user_id, current_winnings, initial_bet, rounds_won):
-        super().__init__(timeout=60)
+        super().__init__(timeout=180)  # Increased from 60 to 180 seconds (3 minutes)
         self.user_id = user_id
         self.current_winnings = current_winnings
         self.initial_bet = initial_bet
@@ -1228,46 +1228,87 @@ class FlipChaseView(View):
             
         await interaction.response.defer()
         
-        # Get user data
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
-        
-        # Add winnings to balance
-        profit = self.current_winnings - self.initial_bet
-        balance += self.current_winnings
-        gambled += self.initial_bet
-        total_gambled += self.initial_bet
-        
-        # Update database
-        c.execute(
-            "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
-            (balance, gambled, total_gambled, self.user_id)
-        )
-        conn.commit()
-        
-        # Log the win
-        await log_bet_activity(self.user_id, self.initial_bet, "flipchase", "win")
-        
-        # Calculate remaining requirement
-        remaining = max(required_gamble - gambled, 0)
-        
-        embed = discord.Embed(
-            title="💰 Winnings Banked!",
-            description=f"You successfully banked your winnings!",
-            color=discord.Color.gold()
-        )
-        embed.add_field(name="Total Winnings", value=f"{format_money(self.current_winnings)}", inline=True)
-        embed.add_field(name="Profit", value=f"+{format_money(profit)}", inline=True)
-        embed.add_field(name="Rounds Won", value=f"{self.rounds_won}", inline=True)
-        embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=False)
-        embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
-        embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
-        
-        # Remove from active games
-        if self.user_id in active_flip_chase:
-            del active_flip_chase[self.user_id]
-        
-        # Disable buttons
-        for item in self.children:
+        try:
+            # Get user data
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            
+            # Add winnings to balance
+            profit = self.current_winnings - self.initial_bet
+            balance += self.current_winnings
+            gambled += self.initial_bet
+            total_gambled += self.initial_bet
+            
+            # Update database with explicit commit
+            c.execute(
+                "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                (balance, gambled, total_gambled, self.user_id)
+            )
+            conn.commit()
+            
+            # Log the win
+            await log_bet_activity(self.user_id, self.initial_bet, "flipchase", "win")
+            
+            # Calculate remaining requirement
+            remaining = max(required_gamble - gambled, 0)
+            
+            embed = discord.Embed(
+                title="💰 Winnings Banked!",
+                description=f"You successfully banked your winnings!",
+                color=discord.Color.gold()
+            )
+            embed.add_field(name="Total Winnings", value=f"{format_money(self.current_winnings)}", inline=True)
+            embed.add_field(name="Profit", value=f"+{format_money(profit)}", inline=True)
+            embed.add_field(name="Rounds Won", value=f"{self.rounds_won}", inline=True)
+            embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=False)
+            embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
+            embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
+            
+            # Remove from active games
+            if self.user_id in active_flip_chase:
+                del active_flip_chase[self.user_id]
+            
+            # Disable buttons
+            for item in self.children:
+                item.disabled = True
+            
+            await interaction.message.edit(embed=embed, view=self)
+            
+        except Exception as e:
+            # If banking fails, try to refund the user
+            try:
+                user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+                balance += self.current_winnings
+                c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, self.user_id))
+                conn.commit()
+                await interaction.followup.send(f"❌ Error banking winnings, but your balance has been updated: {format_money(balance)}", ephemeral=True)
+            except:
+                await interaction.followup.send(f"❌ Critical error banking winnings: {str(e)}\nPlease contact an admin with your game details.", ephemeral=True)
+    
+    async def on_timeout(self):
+        """Called when the view times out - refund the current winnings to the player."""
+        try:
+            # Get user data and refund their current winnings
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            
+            # Add current winnings to balance (including original bet)
+            balance += self.current_winnings
+            gambled += self.initial_bet
+            total_gambled += self.initial_bet
+            
+            # Update database
+            c.execute(
+                "UPDATE users SET balance=?, gambled=?, total_gambled=? WHERE user_id=?",
+                (balance, gambled, total_gambled, self.user_id)
+            )
+            conn.commit()
+            
+            # Remove from active games
+            if self.user_id in active_flip_chase:
+                del active_flip_chase[self.user_id]
+                
+            print(f"⏰ FlipChase timeout: Refunded {format_money(self.current_winnings)} to user {self.user_id}")
+        except Exception as e:
+            print(f"❌ Error in FlipChase timeout handler: {str(e)}")
             item.disabled = True
         
         await interaction.message.edit(embed=embed, view=self)
@@ -1384,7 +1425,7 @@ async def flipchase(ctx, amount: str = None):
 # -----------------------------
 class SlotsView(View):
     def __init__(self, user_id, bet_amount, ctx):
-        super().__init__(timeout=60)
+        super().__init__(timeout=120)  # Increased from 60 to 120 seconds
         self.user_id = user_id
         self.bet_amount = bet_amount
         self.ctx = ctx
@@ -2507,7 +2548,7 @@ async def pick(ctx, number: str = None):
 class CrashView(View):
     """Interactive view for the Crash gambling game."""
     def __init__(self, user_id, bet_amount, crash_point, ctx):
-        super().__init__(timeout=120)  # 2 minute timeout
+        super().__init__(timeout=180)  # Increased from 120 to 180 seconds (3 minutes)
         self.user_id = user_id
         self.bet_amount = bet_amount
         self.crash_point = crash_point
@@ -3350,7 +3391,7 @@ class BlackjackGame:
 class BlackjackView(View):
     """Interactive buttons for Blackjack game"""
     def __init__(self, game):
-        super().__init__(timeout=120)
+        super().__init__(timeout=180)  # Increased from 120 to 180 seconds (3 minutes)
         self.game = game
     
     async def update_game_display(self, interaction: discord.Interaction, result=None):
