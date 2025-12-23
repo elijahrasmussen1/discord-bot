@@ -1996,14 +1996,104 @@ async def ticketclose(ctx, *, reason: str = "No reason provided."):
         return
     
     try:
+        # Check if this is a buy ticket (channel name starts with "buy-")
+        is_buy_ticket = ctx.channel.name.startswith("buy-")
+        
         # Get ticket metadata from database
         c.execute("SELECT user_id, panel_name, ticket_name, open_date FROM ticket_metadata WHERE channel_id=?", (ctx.channel.id,))
         ticket_data = c.fetchone()
         
-        if not ticket_data:
+        if not ticket_data and not is_buy_ticket:
             await ctx.send("❌ This command can only be used in ticket channels.")
             return
         
+        # Handle buy tickets differently
+        if is_buy_ticket:
+            # For buy tickets, we don't have metadata in the database
+            # Extract user info from channel name pattern: buy-username-number
+            try:
+                # Get the channel creator from permissions (the user who has read access besides owners/bot)
+                ticket_creator = None
+                for member, overwrite in ctx.channel.overwrites.items():
+                    if isinstance(member, discord.Member) and member.id not in OWNER_IDS and member != ctx.guild.me:
+                        if overwrite.read_messages:
+                            ticket_creator = member
+                            break
+                
+                if not ticket_creator:
+                    await ctx.send("⚠️ Could not identify the ticket creator. Closing anyway...")
+                
+                # Create the close notification embed for buy ticket
+                close_embed = discord.Embed(
+                    title="🎫 Purchase Ticket Closed",
+                    description=f"Your purchase ticket has been closed in **Eli's MM & Gambling!**",
+                    color=discord.Color.red()
+                )
+                close_embed.add_field(
+                    name="📋 Ticket Information",
+                    value=f"**Ticket Name:** {ctx.channel.name}\n**Ticket ID:** {ctx.channel.id}",
+                    inline=False
+                )
+                close_embed.add_field(
+                    name="🔒 Close Information",
+                    value=f"**Closed By:** {ctx.author.mention}\n**Close Date:** {datetime.utcnow().strftime('%B %d, %Y %I:%M %p')}\n**Close Reason:** {reason}",
+                    inline=False
+                )
+                close_embed.set_footer(text="If you have any further questions, feel free to open another ticket.")
+                
+                # Try to DM the ticket creator
+                if ticket_creator:
+                    try:
+                        await ticket_creator.send(embed=close_embed)
+                    except discord.Forbidden:
+                        await ctx.send(f"{ticket_creator.mention}, your ticket is being closed but I couldn't DM you:", embed=close_embed)
+                    except Exception as e:
+                        await ctx.send(f"⚠️ Could not notify {ticket_creator.mention}: {str(e)}")
+                
+                # Create transcript for buy ticket
+                try:
+                    messages = []
+                    async for m in ctx.channel.history(limit=None, oldest_first=True):
+                        timestamp = m.created_at.strftime("%Y-%m-%d %H:%M")
+                        messages.append(f"**[{timestamp}] {m.author.display_name}:** {m.content}")
+                    
+                    transcript_channel = ctx.guild.get_channel(TRANSCRIPT_CHANNEL_ID)
+                    if transcript_channel:
+                        embed = discord.Embed(title="📄 Purchase Ticket Transcript", color=discord.Color.blue())
+                        embed.add_field(
+                            name="Ticket Information",
+                            value=f"**Ticket Name:** {ctx.channel.name}\n**Ticket ID:** {ctx.channel.id}\n**Closed By:** {ctx.author.mention}\n**Close Reason:** {reason}",
+                            inline=False
+                        )
+                        await transcript_channel.send(embed=embed)
+                        
+                        # Split messages into chunks
+                        for i in range(0, len(messages), 10):
+                            chunk = "\n".join(messages[i:i+10])
+                            if len(chunk) > 4096:
+                                await transcript_channel.send(embed=discord.Embed(
+                                    description=chunk[:4096],
+                                    color=discord.Color.blue()
+                                ))
+                            else:
+                                await transcript_channel.send(embed=discord.Embed(
+                                    description=chunk,
+                                    color=discord.Color.blue()
+                                ))
+                except Exception as e:
+                    await ctx.send(f"⚠️ Error creating transcript: {str(e)}")
+                
+                # Notify channel and delete
+                await ctx.send(f"✅ Ticket closed by {ctx.author.mention}. Deleting channel in 3 seconds...")
+                await asyncio.sleep(3)
+                await ctx.channel.delete()
+                return
+                
+            except Exception as e:
+                await ctx.send(f"❌ Error closing buy ticket: {str(e)}")
+                return
+        
+        # Original logic for regular tickets with metadata
         user_id, panel_name, ticket_name, open_date = ticket_data
         ticket_creator = await bot.fetch_user(user_id)
         
