@@ -2393,7 +2393,7 @@ class CrashView(View):
                 
                 # Wait before next update (dynamic speed based on multiplier)
                 # Starts slower (1.5s), speeds up gradually, caps at 0.6s
-                if self.current_multiplier < 2.0:
+                if self.current_multiplier < 1.79:
                     wait_time = 1.5
                 elif self.current_multiplier < 3.0:
                     wait_time = 1.2
@@ -2421,10 +2421,10 @@ class CrashView(View):
             await interaction.response.send_message("❌ Too late! The game already crashed!", ephemeral=True)
             return
         
-        # Minimum cashout multiplier is 2.0x to make the game much harder
-        if self.current_multiplier < 2.0:
+        # Minimum cashout multiplier is 1.79x to make the game much harder
+        if self.current_multiplier < 1.79:
             await interaction.response.send_message(
-                f"❌ Minimum cashout is **2.0x**! Current: **{self.current_multiplier}x**\n"
+                f"❌ Minimum cashout is **1.79x**! Current: **{self.current_multiplier}x**\n"
                 "Wait for the multiplier to increase before cashing out.",
                 ephemeral=True
             )
@@ -4697,14 +4697,14 @@ class GamesView(discord.ui.View):
         )
         embed4.add_field(
             name="💰 Winnings",
-            value="Bet amount × multiplier when you cash out (minimum 2.0x)",
+            value="Bet amount × multiplier when you cash out (minimum 1.79x)",
             inline=False
         )
         embed4.add_field(
             name="✨ Features",
             value=(
                 "• Multiplier starts at **1.0x**\n"
-                "• Minimum cashout: **2.0x** (game is very hard!)\n"
+                "• Minimum cashout: **1.79x** (game is very hard!)\n"
                 "• Click 💵 **Cash Out** button to secure winnings!\n"
                 "• Balanced distribution prevents exploitation"
             ),
