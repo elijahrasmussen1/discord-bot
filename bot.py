@@ -26,6 +26,7 @@ TRANSCRIPT_CHANNEL_ID = 1442288590611681401
 WITHDRAWAL_LOG_CHANNEL = 1450656547402285167
 AUDIT_LOG_CHANNEL = 1451387246061293662  # Channel for fraud detection and activity logs
 DEPOSIT_STATS_CHANNEL = 1452401825994248212  # Channel for 15-minute deposit statistics
+STOCK_CHANNEL = 1452562733080776835  # Channel for brainrot pet stock/inventory
 PING_ROLES = [1442285602166018069, 1442993726057087089]
 MIN_DEPOSIT = 10_000_000
 GAMBLE_PERCENT = 0.30
@@ -96,6 +97,21 @@ CREATE TABLE IF NOT EXISTS bet_activity (
     game_type TEXT NOT NULL,
     result TEXT,
     timestamp TEXT NOT NULL
+)
+""")
+
+# Stock/Inventory system for brainrot pets
+c.execute("""
+CREATE TABLE IF NOT EXISTS stock_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    pet_name TEXT NOT NULL,
+    mutation TEXT NOT NULL,
+    trait TEXT NOT NULL,
+    price INTEGER NOT NULL,
+    stock_amount INTEGER NOT NULL,
+    account_stored TEXT NOT NULL,
+    image_url TEXT,
+    date_added TEXT NOT NULL
 )
 """)
 
@@ -702,6 +718,7 @@ async def assist(ctx):
             "**!amountall [page]** - View all users balances\n"
             "**!gambledall** - View total gambling statistics across all players\n"
             "**!resetgamblingall** - Reset all gambling statistics (total_gambled & gambled)\n"
+            "**!addstock <Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>** - Add pet to stock\n"
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
             "**!unstick** - Remove the sticky message from the current channel"
@@ -5121,6 +5138,284 @@ async def before_deposit_stats():
 
 
 # -----------------------------
+# STOCK/INVENTORY SYSTEM
+# -----------------------------
+# Global variable to track stock message
+stock_message_id = None
+
+class StockView(discord.ui.View):
+    """View for paginated stock/inventory display."""
+    
+    def __init__(self, user_id=None):
+        super().__init__(timeout=None)  # Persistent view, no timeout
+        self.user_id = user_id
+        self.current_page = 0
+        self.pages = []
+        
+    async def update_pages(self):
+        """Fetch and create all stock pages from database."""
+        self.pages = []
+        
+        try:
+            conn_temp = sqlite3.connect("bot.db")
+            c_temp = conn_temp.cursor()
+            
+            # Fetch all stock items ordered by date added
+            c_temp.execute("""
+                SELECT id, pet_name, mutation, trait, price, stock_amount, 
+                       account_stored, image_url, date_added
+                FROM stock_items
+                ORDER BY date_added DESC
+            """)
+            items = c_temp.fetchall()
+            conn_temp.close()
+            
+            if not items:
+                # No items - create empty page
+                embed = discord.Embed(
+                    title="🐾 Brainrot Pet Stock",
+                    description="**No items in stock currently**\n\nCheck back later for available pets!",
+                    color=discord.Color.blue()
+                )
+                embed.set_footer(text="Page 0/0 • Use < > to navigate")
+                self.pages.append(embed)
+                return
+            
+            # Create one page per item
+            for idx, item in enumerate(items):
+                item_id, pet_name, mutation, trait, price, stock_amount, account_stored, image_url, date_added = item
+                
+                embed = discord.Embed(
+                    title=f"🐾 {pet_name}",
+                    description=f"**Available Brainrot Pet**",
+                    color=discord.Color.blue()
+                )
+                
+                embed.add_field(
+                    name="🔮 Mutation",
+                    value=mutation,
+                    inline=True
+                )
+                embed.add_field(
+                    name="✨ Trait",
+                    value=trait,
+                    inline=True
+                )
+                embed.add_field(
+                    name="💰 Price",
+                    value=format_money(price),
+                    inline=True
+                )
+                embed.add_field(
+                    name="📦 Stock",
+                    value=f"{stock_amount} available",
+                    inline=True
+                )
+                embed.add_field(
+                    name="📅 Added",
+                    value=date_added.split()[0],  # Just the date
+                    inline=True
+                )
+                embed.add_field(
+                    name="🏪 Item ID",
+                    value=f"#{item_id}",
+                    inline=True
+                )
+                
+                # Add image if URL is provided
+                if image_url:
+                    embed.set_image(url=image_url)
+                
+                embed.set_footer(text=f"Page {idx + 1}/{len(items)} • Use < > to navigate")
+                self.pages.append(embed)
+                
+        except Exception as e:
+            # Error page
+            embed = discord.Embed(
+                title="❌ Error Loading Stock",
+                description=f"An error occurred: {str(e)}",
+                color=discord.Color.red()
+            )
+            self.pages.append(embed)
+    
+    @discord.ui.button(label="<", style=discord.ButtonStyle.primary, custom_id="stock_prev")
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to previous page."""
+        await self.update_pages()  # Refresh data
+        if not self.pages:
+            await interaction.response.send_message("❌ No stock items available.", ephemeral=True)
+            return
+            
+        self.current_page = (self.current_page - 1) % len(self.pages)
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+    
+    @discord.ui.button(label=">", style=discord.ButtonStyle.primary, custom_id="stock_next")
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to next page."""
+        await self.update_pages()  # Refresh data
+        if not self.pages:
+            await interaction.response.send_message("❌ No stock items available.", ephemeral=True)
+            return
+            
+        self.current_page = (self.current_page + 1) % len(self.pages)
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
+
+@bot.command(name="addstock")
+async def addstock(ctx, pet_name: str = None, mutation: str = None, trait: str = None, 
+                   price: str = None, stock_amount: str = None, account_stored: str = None):
+    """
+    Add a new item to the brainrot pet stock. Owner only.
+    
+    Usage: !addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>
+    Example: !addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount
+    
+    Note: You can attach an image to the command message to include it in the stock listing.
+    """
+    # Check if user is owner
+    if ctx.author.id not in OWNER_IDS:
+        await ctx.send("❌ Only bot owners can use this command.")
+        return
+    
+    # Parse comma-separated arguments if provided as single string
+    if pet_name and not mutation:
+        # Try to parse all arguments from first parameter
+        args_str = pet_name
+        for arg in [mutation, trait, price, stock_amount, account_stored]:
+            if arg:
+                args_str += " " + arg
+        
+        # Split by comma
+        parts = [p.strip() for p in args_str.split(',')]
+        if len(parts) >= 6:
+            pet_name, mutation, trait, price, stock_amount, account_stored = parts[:6]
+        elif len(parts) < 6:
+            await ctx.send(
+                "❌ **Invalid format!**\n\n"
+                "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
+                "**Example:** `!addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount`\n\n"
+                "**Note:** You can attach an image to include it in the listing!"
+            )
+            return
+    
+    # Validate all parameters are provided
+    if not all([pet_name, mutation, trait, price, stock_amount, account_stored]):
+        await ctx.send(
+            "❌ **Missing parameters!**\n\n"
+            "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
+            "**Example:** `!addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount`\n\n"
+            "**Note:** You can attach an image to include it in the listing!"
+        )
+        return
+    
+    try:
+        # Parse price
+        price_value = parse_money(price)
+        if price_value <= 0:
+            await ctx.send(f"❌ Invalid price format! Use formats like: 50m, 100m, 1b")
+            return
+        
+        # Parse stock amount
+        try:
+            stock_value = int(stock_amount.strip())
+            if stock_value <= 0:
+                raise ValueError()
+        except:
+            await ctx.send(f"❌ Invalid stock amount! Must be a positive integer.")
+            return
+        
+        # Check for attached image
+        image_url = None
+        if ctx.message.attachments:
+            # Get the first attachment
+            attachment = ctx.message.attachments[0]
+            # Verify it's an image
+            if any(attachment.filename.lower().endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']):
+                image_url = attachment.url
+        
+        # Add to database
+        conn_temp = sqlite3.connect("bot.db")
+        c_temp = conn_temp.cursor()
+        
+        c_temp.execute("""
+            INSERT INTO stock_items (pet_name, mutation, trait, price, stock_amount, 
+                                     account_stored, image_url, date_added)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (pet_name.strip(), mutation.strip(), trait.strip(), price_value, stock_value, 
+              account_stored.strip(), image_url, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")))
+        
+        item_id = c_temp.lastrowid
+        conn_temp.commit()
+        conn_temp.close()
+        
+        # Send confirmation in current channel
+        confirm_embed = discord.Embed(
+            title="✅ Stock Item Added!",
+            description=f"**{pet_name}** has been added to the stock!",
+            color=discord.Color.green()
+        )
+        confirm_embed.add_field(name="🔮 Mutation", value=mutation, inline=True)
+        confirm_embed.add_field(name="✨ Trait", value=trait, inline=True)
+        confirm_embed.add_field(name="💰 Price", value=format_money(price_value), inline=True)
+        confirm_embed.add_field(name="📦 Stock", value=str(stock_value), inline=True)
+        confirm_embed.add_field(name="🏪 Item ID", value=f"#{item_id}", inline=True)
+        if image_url:
+            confirm_embed.add_field(name="📷 Image", value="✅ Included", inline=True)
+        
+        await ctx.send(embed=confirm_embed)
+        
+        # Update stock channel
+        await update_stock_display()
+        
+        print(f"✅ Stock item #{item_id} added: {pet_name}")
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error adding stock item: {str(e)}")
+        print(f"❌ Error in addstock command: {str(e)}")
+
+
+async def update_stock_display():
+    """Update or create the stock display message in the stock channel."""
+    global stock_message_id
+    
+    try:
+        channel = bot.get_channel(STOCK_CHANNEL)
+        if not channel:
+            print(f"⚠️ Stock channel {STOCK_CHANNEL} not found")
+            return
+        
+        # Create view and update pages
+        view = StockView()
+        await view.update_pages()
+        
+        if not view.pages:
+            print("⚠️ No stock pages to display")
+            return
+        
+        # Try to edit existing message or create new one
+        if stock_message_id:
+            try:
+                message = await channel.fetch_message(stock_message_id)
+                await message.edit(embed=view.pages[0], view=view)
+                print(f"✅ Updated stock display message")
+            except discord.NotFound:
+                # Message was deleted, create new one
+                message = await channel.send(embed=view.pages[0], view=view)
+                stock_message_id = message.id
+                print(f"✅ Created new stock display message (old one was deleted)")
+            except Exception as e:
+                print(f"❌ Error updating stock message: {str(e)}")
+        else:
+            # No message exists, create one
+            message = await channel.send(embed=view.pages[0], view=view)
+            stock_message_id = message.id
+            print(f"✅ Created new stock display message")
+            
+    except Exception as e:
+        print(f"❌ Error updating stock display: {str(e)}")
+
+
+# -----------------------------
 # BOT READY
 # -----------------------------
 @bot.event
@@ -5130,12 +5425,19 @@ async def on_ready():
     # Register persistent views
     bot.add_view(TicketPanelView())
     bot.add_view(WithdrawalPanelView())
+    bot.add_view(StockView())  # Register persistent stock view
     print("✅ Persistent views registered")
     
     # Start deposit statistics task if not already running
     if not post_deposit_stats.is_running():
         post_deposit_stats.start()
         print("✅ Deposit statistics task started")
+    
+    # Initialize stock display if not exists
+    try:
+        await update_stock_display()
+    except Exception as e:
+        print(f"⚠️ Error initializing stock display: {str(e)}")
 
 @bot.event
 async def on_command_error(ctx, error):
