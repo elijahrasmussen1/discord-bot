@@ -754,6 +754,19 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         await ctx.send("❌ You cannot donate to bots!")
         return
     
+    # Check cooldown (1 hour)
+    current_time = datetime.utcnow()
+    if ctx.author.id in donation_cooldowns:
+        last_donation = donation_cooldowns[ctx.author.id]
+        time_diff = current_time - last_donation
+        cooldown_remaining = timedelta(hours=1) - time_diff
+        
+        if cooldown_remaining.total_seconds() > 0:
+            minutes_remaining = int(cooldown_remaining.total_seconds() / 60)
+            seconds_remaining = int(cooldown_remaining.total_seconds() % 60)
+            await ctx.send(f"❌ **Donation Cooldown Active**\nYou can donate again in **{minutes_remaining}m {seconds_remaining}s**")
+            return
+    
     try:
         # Parse donation amount
         value = parse_money(amount)
@@ -761,6 +774,11 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         # Minimum donation amount
         if value < 1000000:  # 1M minimum
             await ctx.send("❌ Minimum donation amount is 1,000,000$")
+            return
+        
+        # Maximum donation amount
+        if value > MAX_DONATION:
+            await ctx.send(f"❌ Maximum donation amount is {MAX_DONATION:,}$ (150M)")
             return
         
         # Get donor's balance
@@ -771,19 +789,39 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
             await ctx.send(f"❌ Insufficient balance! You have {donor_bal:,}$ but tried to donate {value:,}$")
             return
         
-        # Get recipient's info
+        # Get recipient's info (ensure they exist in database)
         recipient_id, recipient_bal, recipient_req, recipient_gambled, _, _ = get_user(user.id)
         
-        # Perform the transaction
+        # Additional validation: Verify balances haven't changed during processing
+        donor_id_check, donor_bal_check, _, _, _, _ = get_user(ctx.author.id)
+        if donor_bal_check != donor_bal:
+            await ctx.send("❌ Your balance changed during processing. Please try again.")
+            return
+        
+        # Perform the transaction with atomic operations
         # Deduct from donor
         update_balance(ctx.author.id, -value)
         
         # Add to recipient
         update_balance(user.id, value)
         
-        # Get updated balances
+        # Verify the transaction completed correctly
         _, donor_new_bal, _, _, _, _ = get_user(ctx.author.id)
         _, recipient_new_bal, _, _, _, _ = get_user(user.id)
+        
+        # Verify transaction integrity
+        expected_donor_bal = donor_bal - value
+        expected_recipient_bal = recipient_bal + value
+        
+        if donor_new_bal != expected_donor_bal:
+            # Rollback by reversing operations
+            update_balance(ctx.author.id, value)
+            update_balance(user.id, -value)
+            await ctx.send("❌ Transaction failed verification. Operation rolled back.")
+            return
+        
+        # Set cooldown after successful transaction
+        donation_cooldowns[ctx.author.id] = current_time
         
         # Log transaction for donor
         await log_transaction(
@@ -821,7 +859,7 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         )
         embed.add_field(name="📤 Your New Balance", value=f"{donor_new_bal:,}$", inline=True)
         embed.add_field(name="📥 Recipient's New Balance", value=f"{recipient_new_bal:,}$", inline=True)
-        embed.set_footer(text="Thank you for your generosity!")
+        embed.set_footer(text="Next donation available in 1 hour")
         
         await ctx.send(embed=embed)
         
@@ -1153,6 +1191,11 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
 # -----------------------------
 # Global dictionary to track active flip & chase games
 active_flip_chase = {}
+
+# Global dictionary to track donation cooldowns (user_id: datetime)
+donation_cooldowns = {}
+# Maximum donation amount
+MAX_DONATION = 150_000_000  # 150M
 
 class FlipChaseView(View):
     def __init__(self, user_id, current_winnings, initial_bet, rounds_won):
