@@ -5640,43 +5640,31 @@ class StockView(discord.ui.View):
                 overwrites=overwrites
             )
             
-            # Send welcome message
-            welcome_embed = discord.Embed(
-                title="🛒 Purchase Ticket Created",
+            # Ping owner roles
+            role_mentions = ' '.join(f"<@&{role_id}>" for role_id in PING_ROLES)
+            await ticket_channel.send(f"📢 {role_mentions}")
+            
+            # Send combined welcome and confirmation embed
+            combined_embed = discord.Embed(
+                title="🛒 Purchase Ticket",
                 description=(
-                    f"Welcome {interaction.user.mention} to the purchase ticket!\n\n"
-                    f"An owner will be with you shortly.\n\n"
+                    f"Welcome {interaction.user.mention} to **Eli's MM & Gambling!**\n\n"
+                    f"An owner will be here to assist your purchase very shortly.\n\n"
                     f"**Pet Details:**\n"
                     f"🐾 **Name:** {pet_name}\n"
                     f"🔮 **Mutation:** {mutation}\n"
                     f"✨ **Trait:** {trait}\n"
                     f"💰 **Price:** {format_money(price)}\n"
-                    f"💵 **Your Balance:** {format_money(buyer_balance)}"
+                    f"💵 **Your Balance:** {format_money(buyer_balance)}\n\n"
+                    f"**Please confirm you want to purchase this pet by clicking Yes below.**"
                 ),
                 color=discord.Color.blue()
             )
             
-            await ticket_channel.send(embed=welcome_embed)
-            
-            # Ping owners
-            owner_mentions = ' '.join(f"<@{owner_id}>" for owner_id in OWNER_IDS)
-            await ticket_channel.send(f"📢 {owner_mentions}")
-            
             # Send buyer confirmation view
             buyer_view = BuyerConfirmationView(item_id, pet_name, price, user_id, ticket_channel)
             
-            confirm_embed = discord.Embed(
-                title="🛒 Confirm Your Purchase",
-                description=(
-                    f"**Please confirm you want to purchase:**\n\n"
-                    f"🐾 **Pet:** {pet_name}\n"
-                    f"💰 **Price:** {format_money(price)}\n\n"
-                    f"Click **Yes** to proceed or **No** to cancel."
-                ),
-                color=discord.Color.gold()
-            )
-            
-            await ticket_channel.send(f"{interaction.user.mention}", embed=confirm_embed, view=buyer_view)
+            await ticket_channel.send(f"{interaction.user.mention}", embed=combined_embed, view=buyer_view)
             
             # Send response to user
             await interaction.response.send_message(
