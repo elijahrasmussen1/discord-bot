@@ -461,11 +461,17 @@ async def petids(ctx):
         current_chunk = []
         current_length = 0
         for line in description_lines:
-            line_length = len(line) + 1  # +1 for newline
-            if current_length + line_length >= 4096:
+            # Calculate the length this line would add (including newline separator if not first)
+            if current_chunk:
+                line_length = len(line) + 1  # +1 for newline separator
+            else:
+                line_length = len(line)  # First line, no separator
+            
+            if current_length + line_length > 4096:
+                # Would exceed limit, save current chunk and start new one
                 chunks.append("\n".join(current_chunk))
                 current_chunk = [line]
-                current_length = len(line)  # First line in new chunk doesn't need preceding newline
+                current_length = len(line)
             else:
                 current_chunk.append(line)
                 current_length += line_length
