@@ -5297,49 +5297,57 @@ class StockView(discord.ui.View):
 
 
 @bot.command(name="addstock")
-async def addstock(ctx, pet_name: str = None, mutation: str = None, trait: str = None, 
-                   price: str = None, stock_amount: str = None, account_stored: str = None):
+async def addstock(ctx, *, args: str = None):
     """
     Add a new item to the brainrot pet stock. Owner only.
     
     Usage: !addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>
-    Example: !addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount
+    Example: !addstock Los Combinasionas 127.5m, Candy, Pumpkin, 300M, 1, gamb1lebank1
     
     Note: You can attach an image to the command message to include it in the stock listing.
+    Fields are separated by commas. Spaces are allowed within each field.
     """
     # Check if user is owner
     if ctx.author.id not in OWNER_IDS:
         await ctx.send("❌ Only bot owners can use this command.")
         return
     
-    # Parse comma-separated arguments if provided as single string
-    if pet_name and not mutation:
-        # Try to parse all arguments from first parameter
-        args_str = pet_name
-        for arg in [mutation, trait, price, stock_amount, account_stored]:
-            if arg:
-                args_str += " " + arg
-        
-        # Split by comma
-        parts = [p.strip() for p in args_str.split(',')]
-        if len(parts) >= 6:
-            pet_name, mutation, trait, price, stock_amount, account_stored = parts[:6]
-        elif len(parts) < 6:
-            await ctx.send(
-                "❌ **Invalid format!**\n\n"
-                "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
-                "**Example:** `!addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount`\n\n"
-                "**Note:** You can attach an image to include it in the listing!"
-            )
-            return
-    
-    # Validate all parameters are provided
-    if not all([pet_name, mutation, trait, price, stock_amount, account_stored]):
+    # Check if args provided
+    if not args:
         await ctx.send(
             "❌ **Missing parameters!**\n\n"
             "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
-            "**Example:** `!addstock Capybara, Rainbow, Friendly, 50m, 5, MainAccount`\n\n"
-            "**Note:** You can attach an image to include it in the listing!"
+            "**Example:** `!addstock Los Combinasionas 127.5m, Candy, Pumpkin, 300M, 1, gamb1lebank1`\n\n"
+            "**Note:** Fields are separated by commas. Spaces are allowed within fields.\n"
+            "You can attach an image to include it in the listing!"
+        )
+        return
+    
+    # Split by comma - this allows spaces within each field
+    parts = [p.strip() for p in args.split(',')]
+    
+    # Validate we have exactly 6 parts
+    if len(parts) < 6:
+        await ctx.send(
+            "❌ **Invalid format!**\n\n"
+            "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
+            "**Example:** `!addstock Los Combinasionas 127.5m, Candy, Pumpkin, 300M, 1, gamb1lebank1`\n\n"
+            f"**You provided {len(parts)} field(s), but 6 are required.**\n\n"
+            "**Note:** Fields are separated by commas. Spaces are allowed within fields.\n"
+            "You can attach an image to include it in the listing!"
+        )
+        return
+    
+    # Extract the 6 required fields
+    pet_name, mutation, trait, price, stock_amount, account_stored = parts[:6]
+    
+    # Validate all fields are non-empty after stripping
+    if not all([pet_name, mutation, trait, price, stock_amount, account_stored]):
+        await ctx.send(
+            "❌ **Empty field detected!**\n\n"
+            "All fields must contain values.\n\n"
+            "**Usage:** `!addstock <Pet Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>`\n\n"
+            "**Example:** `!addstock Los Combinasionas 127.5m, Candy, Pumpkin, 300M, 1, gamb1lebank1`"
         )
         return
     
