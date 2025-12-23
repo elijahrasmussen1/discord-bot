@@ -5141,15 +5141,169 @@ async def before_deposit_stats():
 stock_message_id = None
 # Global dictionary to track each user's current page
 user_stock_pages = {}
+# Global counter for buy tickets
+buy_ticket_counter = 1
+
+
+class BuyerConfirmationView(discord.ui.View):
+    """View for buyer to confirm purchase."""
+    
+    def __init__(self, item_id, pet_name, price, buyer_id, ticket_channel):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.item_id = item_id
+        self.pet_name = pet_name
+        self.price = price
+        self.buyer_id = buyer_id
+        self.ticket_channel = ticket_channel
+    
+    @discord.ui.button(label="Yes", style=discord.ButtonStyle.green)
+    async def yes_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Buyer confirms the purchase."""
+        if interaction.user.id != self.buyer_id:
+            await interaction.response.send_message("❌ Only the buyer can confirm this purchase.", ephemeral=True)
+            return
+        
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(view=self)
+        
+        # Send waiting message to buyer
+        await interaction.response.send_message(
+            "✅ **Purchase confirmed!**\n\nWaiting for owner approval...",
+            ephemeral=False
+        )
+        
+        # Create owner confirmation view
+        owner_view = OwnerConfirmationView(self.item_id, self.pet_name, self.price, self.buyer_id, self.ticket_channel)
+        
+        # Send owner confirmation message
+        owner_embed = discord.Embed(
+            title="🔔 Purchase Approval Needed",
+            description=f"**{interaction.user.mention}** wants to purchase:\n\n"
+                       f"🐾 **Pet:** {self.pet_name}\n"
+                       f"💰 **Price:** {format_money(self.price)}\n"
+                       f"🏪 **Item ID:** #{self.item_id}",
+            color=discord.Color.gold()
+        )
+        owner_embed.set_footer(text="Click Confirm to approve this purchase")
+        
+        await self.ticket_channel.send(
+            f"<@{'> <@'.join(str(owner_id) for owner_id in OWNER_IDS)}>",
+            embed=owner_embed,
+            view=owner_view
+        )
+    
+    @discord.ui.button(label="No", style=discord.ButtonStyle.red)
+    async def no_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Buyer cancels the purchase."""
+        if interaction.user.id != self.buyer_id:
+            await interaction.response.send_message("❌ Only the buyer can cancel this purchase.", ephemeral=True)
+            return
+        
+        # Disable all buttons
+        for item in self.children:
+            item.disabled = True
+        await interaction.message.edit(view=self)
+        
+        await interaction.response.send_message(
+            "❌ **Purchase cancelled.**\n\nYou can close this ticket or try purchasing another pet.",
+            ephemeral=False
+        )
+
+
+class OwnerConfirmationView(discord.ui.View):
+    """View for owner to confirm and complete purchase."""
+    
+    def __init__(self, item_id, pet_name, price, buyer_id, ticket_channel):
+        super().__init__(timeout=None)  # No timeout for owner confirmation
+        self.item_id = item_id
+        self.pet_name = pet_name
+        self.price = price
+        self.buyer_id = buyer_id
+        self.ticket_channel = ticket_channel
+    
+    @discord.ui.button(label="Confirm", style=discord.ButtonStyle.green, custom_id=f"owner_confirm_buy")
+    async def confirm_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Owner confirms and completes the purchase."""
+        if interaction.user.id not in OWNER_IDS:
+            await interaction.response.send_message("❌ Only bot owners can confirm purchases.", ephemeral=True)
+            return
+        
+        try:
+            # Check buyer's balance
+            c.execute("SELECT balance FROM users WHERE user_id = ?", (self.buyer_id,))
+            result = c.fetchone()
+            
+            if not result:
+                await interaction.response.send_message(
+                    f"❌ **Error:** Buyer <@{self.buyer_id}> not found in database.",
+                    ephemeral=False
+                )
+                return
+            
+            buyer_balance = result[0]
+            
+            if buyer_balance < self.price:
+                await interaction.response.send_message(
+                    f"❌ **Insufficient funds!**\n\n"
+                    f"<@{self.buyer_id}> has {format_money(buyer_balance)} but needs {format_money(self.price)}.",
+                    ephemeral=False
+                )
+                return
+            
+            # Subtract amount from buyer's balance
+            new_balance = buyer_balance - self.price
+            c.execute("UPDATE users SET balance = ? WHERE user_id = ?", (new_balance, self.buyer_id))
+            
+            # Remove stock item from database
+            c.execute("DELETE FROM stock_items WHERE id = ?", (self.item_id,))
+            conn.commit()
+            
+            # Disable button
+            for item in self.children:
+                item.disabled = True
+            await interaction.message.edit(view=self)
+            
+            # Send success message
+            success_embed = discord.Embed(
+                title="✅ Purchase Complete!",
+                description=(
+                    f"**Purchase successfully completed!**\n\n"
+                    f"🐾 **Pet:** {self.pet_name}\n"
+                    f"💰 **Price:** {format_money(self.price)}\n"
+                    f"👤 **Buyer:** <@{self.buyer_id}>\n"
+                    f"💵 **New Balance:** {format_money(new_balance)}\n\n"
+                    f"**The pet has been removed from stock.**"
+                ),
+                color=discord.Color.green()
+            )
+            success_embed.set_footer(text=f"Confirmed by {interaction.user.name}")
+            
+            await interaction.response.send_message(embed=success_embed, ephemeral=False)
+            
+            # Update stock display
+            await update_stock_display()
+            
+            print(f"✅ Purchase completed: {self.pet_name} sold to {self.buyer_id} for {format_money(self.price)}")
+            
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ **Error completing purchase:** {str(e)}",
+                ephemeral=False
+            )
+            print(f"❌ Error in owner confirmation: {str(e)}")
+
 
 class StockView(discord.ui.View):
-    """View for paginated stock/inventory display."""
+    """View for paginated stock/inventory display with buy functionality."""
     
-    def __init__(self, user_id=None):
+    def __init__(self, user_id=None, item_data=None):
         super().__init__(timeout=None)  # Persistent view, no timeout
         self.user_id = user_id
         self.current_page = 0
         self.pages = []
+        self.item_data = item_data  # Store item data for Buy button
         
     async def update_pages(self):
         """Fetch and create all stock pages from database."""
@@ -5225,8 +5379,8 @@ class StockView(discord.ui.View):
                 if image_url:
                     embed.set_image(url=image_url)
                 
-                embed.set_footer(text=f"Page {idx + 1}/{len(items)} • Use < > to navigate")
-                self.pages.append(embed)
+                embed.set_footer(text=f"Page {idx + 1}/{len(items)} • Use < > to navigate | Click Buy to purchase")
+                self.pages.append((embed, item))  # Store both embed and item data
                 
         except Exception as e:
             # Error page
@@ -5235,7 +5389,7 @@ class StockView(discord.ui.View):
                 description=f"An error occurred: {str(e)}",
                 color=discord.Color.red()
             )
-            self.pages.append(embed)
+            self.pages.append((embed, None))
     
     @discord.ui.button(label="<", style=discord.ButtonStyle.primary, custom_id="stock_prev")
     async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -5259,9 +5413,12 @@ class StockView(discord.ui.View):
         user_stock_pages[user_id] = (user_stock_pages[user_id] - 1) % len(temp_view.pages)
         current_page = user_stock_pages[user_id]
         
+        # Get embed and item data for current page
+        embed, item_data = temp_view.pages[current_page]
+        
         # Send ephemeral response with the user's personal page
         await interaction.response.send_message(
-            embed=temp_view.pages[current_page], 
+            embed=embed, 
             view=temp_view,
             ephemeral=True
         )
@@ -5288,12 +5445,153 @@ class StockView(discord.ui.View):
         user_stock_pages[user_id] = (user_stock_pages[user_id] + 1) % len(temp_view.pages)
         current_page = user_stock_pages[user_id]
         
+        # Get embed and item data for current page
+        embed, item_data = temp_view.pages[current_page]
+        
         # Send ephemeral response with the user's personal page
         await interaction.response.send_message(
-            embed=temp_view.pages[current_page], 
+            embed=embed, 
             view=temp_view,
             ephemeral=True
         )
+    
+    @discord.ui.button(label="🛒 Buy", style=discord.ButtonStyle.green, custom_id="stock_buy")
+    async def buy_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Initiate purchase process for the current stock item."""
+        global buy_ticket_counter, user_stock_pages
+        
+        try:
+            # Get user's current page
+            user_id = interaction.user.id
+            if user_id not in user_stock_pages:
+                user_stock_pages[user_id] = 0
+            
+            current_page = user_stock_pages[user_id]
+            
+            # Fetch current stock items
+            temp_view = StockView(user_id=user_id)
+            await temp_view.update_pages()
+            
+            if not temp_view.pages or current_page >= len(temp_view.pages):
+                await interaction.response.send_message("❌ Error: Invalid stock page.", ephemeral=True)
+                return
+            
+            # Get item data for current page
+            embed, item_data = temp_view.pages[current_page]
+            
+            if not item_data:
+                await interaction.response.send_message("❌ No item data available for this page.", ephemeral=True)
+                return
+            
+            item_id, pet_name, mutation, trait, price, stock_amount, account_stored, image_url, date_added = item_data
+            
+            # Check buyer's balance
+            c.execute("SELECT balance FROM users WHERE user_id = ?", (user_id,))
+            result = c.fetchone()
+            
+            if not result:
+                await interaction.response.send_message(
+                    "❌ **You don't have a gambling account!**\n\n"
+                    "Please make a deposit first to start gambling and purchasing pets.",
+                    ephemeral=True
+                )
+                return
+            
+            buyer_balance = result[0]
+            
+            if buyer_balance < price:
+                await interaction.response.send_message(
+                    f"❌ **Insufficient funds!**\n\n"
+                    f"You have {format_money(buyer_balance)} but this pet costs {format_money(price)}.\n\n"
+                    f"You need {format_money(price - buyer_balance)} more to purchase this pet.",
+                    ephemeral=True
+                )
+                return
+            
+            # Create buy ticket channel
+            guild = interaction.guild
+            category = guild.get_channel(TICKET_CATEGORY_ID)
+            
+            if not category:
+                await interaction.response.send_message("❌ Error: Ticket category not found.", ephemeral=True)
+                return
+            
+            # Create channel name
+            channel_name = f"buy-{interaction.user.name}-{buy_ticket_counter}"
+            buy_ticket_counter += 1
+            
+            # Set permissions
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(read_messages=False),
+                interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            }
+            
+            # Add owners to permissions
+            for owner_id in OWNER_IDS:
+                owner = guild.get_member(owner_id)
+                if owner:
+                    overwrites[owner] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+            # Create ticket channel
+            ticket_channel = await category.create_text_channel(
+                name=channel_name,
+                overwrites=overwrites
+            )
+            
+            # Send welcome message
+            welcome_embed = discord.Embed(
+                title="🛒 Purchase Ticket Created",
+                description=(
+                    f"Welcome {interaction.user.mention} to the purchase ticket!\n\n"
+                    f"An owner will be with you shortly.\n\n"
+                    f"**Pet Details:**\n"
+                    f"🐾 **Name:** {pet_name}\n"
+                    f"🔮 **Mutation:** {mutation}\n"
+                    f"✨ **Trait:** {trait}\n"
+                    f"💰 **Price:** {format_money(price)}\n"
+                    f"💵 **Your Balance:** {format_money(buyer_balance)}"
+                ),
+                color=discord.Color.blue()
+            )
+            
+            await ticket_channel.send(embed=welcome_embed)
+            
+            # Ping owners
+            owner_mentions = ' '.join(f"<@{owner_id}>" for owner_id in OWNER_IDS)
+            await ticket_channel.send(f"📢 {owner_mentions}")
+            
+            # Send buyer confirmation view
+            buyer_view = BuyerConfirmationView(item_id, pet_name, price, user_id, ticket_channel)
+            
+            confirm_embed = discord.Embed(
+                title="🛒 Confirm Your Purchase",
+                description=(
+                    f"**Please confirm you want to purchase:**\n\n"
+                    f"🐾 **Pet:** {pet_name}\n"
+                    f"💰 **Price:** {format_money(price)}\n\n"
+                    f"Click **Yes** to proceed or **No** to cancel."
+                ),
+                color=discord.Color.gold()
+            )
+            
+            await ticket_channel.send(f"{interaction.user.mention}", embed=confirm_embed, view=buyer_view)
+            
+            # Send response to user
+            await interaction.response.send_message(
+                f"✅ **Purchase ticket created!**\n\n"
+                f"Please head to {ticket_channel.mention} to complete your purchase.",
+                ephemeral=True
+            )
+            
+            print(f"✅ Buy ticket created: {channel_name} for {pet_name}")
+            
+        except Exception as e:
+            await interaction.response.send_message(
+                f"❌ **Error creating purchase ticket:** {str(e)}",
+                ephemeral=True
+            )
+            print(f"❌ Error in buy button: {str(e)}")
 
 
 @bot.command(name="addstock")
@@ -5543,22 +5841,25 @@ async def update_stock_display():
             print("⚠️ No stock pages to display")
             return
         
+        # Extract just the embed from the first page (tuple of embed, item_data)
+        first_embed = view.pages[0][0] if isinstance(view.pages[0], tuple) else view.pages[0]
+        
         # Try to edit existing message or create new one
         if stock_message_id:
             try:
                 message = await channel.fetch_message(stock_message_id)
-                await message.edit(embed=view.pages[0], view=view)
+                await message.edit(embed=first_embed, view=view)
                 print(f"✅ Updated stock display message")
             except discord.NotFound:
                 # Message was deleted, create new one
-                message = await channel.send(embed=view.pages[0], view=view)
+                message = await channel.send(embed=first_embed, view=view)
                 stock_message_id = message.id
                 print(f"✅ Created new stock display message (old one was deleted)")
             except Exception as e:
                 print(f"❌ Error updating stock message: {str(e)}")
         else:
             # No message exists, create one
-            message = await channel.send(embed=view.pages[0], view=view)
+            message = await channel.send(embed=first_embed, view=view)
             stock_message_id = message.id
             print(f"✅ Created new stock display message")
             
