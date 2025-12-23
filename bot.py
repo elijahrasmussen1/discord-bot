@@ -710,6 +710,7 @@ async def assist(ctx):
     ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
+            "**!ownercom** - Display all owner commands (detailed list)\n"
             "**!ticketpanel** - Send deposit ticket panel\n"
             "**!withdrawalpanel** - Send withdrawal ticket panel\n"
             "**!ticketclose [reason]** - Close a ticket with optional reason\n"
@@ -719,6 +720,7 @@ async def assist(ctx):
             "**!gambledall** - View total gambling statistics across all players\n"
             "**!resetgamblingall** - Reset all gambling statistics (total_gambled & gambled)\n"
             "**!addstock <Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>** - Add pet to stock\n"
+            "**!resetstock** - Delete all current stock items\n"
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
             "**!unstick** - Remove the sticky message from the current channel"
@@ -1100,11 +1102,6 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
         
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
-            return
-        
-        # Minimum bet
-        if value < 1000000:  # 1M minimum
-            await ctx.send("❌ Minimum bet is 1,000,000$!")
             return
         
         # Check for rapid betting (fraud detection)
@@ -5410,6 +5407,114 @@ async def addstock(ctx, pet_name: str = None, mutation: str = None, trait: str =
     except Exception as e:
         await ctx.send(f"❌ Error adding stock item: {str(e)}")
         print(f"❌ Error in addstock command: {str(e)}")
+
+
+@bot.command(name="resetstock")
+async def resetstock(ctx):
+    """Delete all stock items (Owner only)"""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ You do not have permission to use this command.")
+        return
+    
+    try:
+        # Get count of current stock items
+        c.execute("SELECT COUNT(*) FROM stock_items")
+        count = c.fetchone()[0]
+        
+        if count == 0:
+            await ctx.send("ℹ️ There are no stock items to delete.")
+            return
+        
+        # Delete all stock items
+        c.execute("DELETE FROM stock_items")
+        conn.commit()
+        
+        # Update stock display
+        await update_stock_display()
+        
+        embed = discord.Embed(
+            title="🗑️ Stock Reset Complete",
+            description=f"✅ Successfully deleted **{count}** stock item(s).\n\nThe stock inventory has been completely cleared.",
+            color=discord.Color.gold()
+        )
+        await ctx.send(embed=embed)
+        
+        print(f"✅ Stock reset: {count} items deleted by {ctx.author}")
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error resetting stock: {str(e)}")
+        print(f"❌ Error in resetstock command: {str(e)}")
+
+
+@bot.command(name="ownercom")
+async def ownercom(ctx):
+    """Display all owner commands (Owner only)"""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ You do not have permission to use this command.")
+        return
+    
+    try:
+        embed = discord.Embed(
+            title="🔐 Owner Commands",
+            description="Complete list of bot owner commands",
+            color=discord.Color.red()
+        )
+        
+        embed.add_field(
+            name="📋 Ticket Management",
+            value=(
+                "**!ticketpanel** - Send deposit ticket panel\n"
+                "**!withdrawalpanel** - Send withdrawal ticket panel\n"
+                "**!ticketclose [reason]** - Close a ticket with optional reason"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💰 Balance Management",
+            value=(
+                "**!deposit @user amount** - Add gambling amount to a user\n"
+                "**!viewamount @user** - View a user's balance\n"
+                "**!amountall [page]** - View all users balances\n"
+                "**!wipeamount @user** - Wipe a user's balance"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 Statistics & Monitoring",
+            value=(
+                "**!gambledall** - View total gambling statistics across all players\n"
+                "**!resetgamblingall** - Reset all gambling statistics (total_gambled & gambled)"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🏪 Stock/Inventory Management",
+            value=(
+                "**!addstock <Name>, <Mutation>, <Trait>, <Price>, <Stock>, <Account>** - Add pet to stock\n"
+                "**!resetstock** - Delete all current stock items"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📌 Utility",
+            value=(
+                "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
+                "**!unstick** - Remove the sticky message from the current channel"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="These commands are restricted to bot owners only")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error displaying owner commands: {str(e)}")
+        print(f"❌ Error in ownercom command: {str(e)}")
 
 
 async def update_stock_display():
