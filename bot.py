@@ -1897,7 +1897,7 @@ async def wipeamount(ctx, user: discord.Member = None):
         await ctx.send(f"❌ Error wiping balance: {str(e)}")
 
 @bot.command(name="trackpet")
-async def trackpet(ctx, pet_id: int = None):
+async def trackpet(ctx, pet_id=None):
     """Owner command to look up a pet by its ID."""
     if not is_owner(ctx.author):
         await ctx.send("❌ Only owners can use this.")
@@ -1908,13 +1908,20 @@ async def trackpet(ctx, pet_id: int = None):
         return
     
     try:
-        c.execute("SELECT name, account FROM pets WHERE id=?", (pet_id,))
+        # Convert pet_id to integer
+        try:
+            pet_id_int = int(pet_id)
+        except (ValueError, TypeError):
+            await ctx.send(f"❌ Invalid pet ID. Please provide a valid number.")
+            return
+        
+        c.execute("SELECT name, account FROM pets WHERE id=?", (pet_id_int,))
         result = c.fetchone()
         if result is None:
-            await ctx.send(f"❌ Pet with ID {pet_id} not found.")
+            await ctx.send(f"❌ Pet with ID {pet_id_int} not found.")
             return
         name, account = result
-        await ctx.send(f"🐾 **Pet ID {pet_id}:** {name} is in **{account}**")
+        await ctx.send(f"🐾 **Pet ID {pet_id_int}:** {name} is in **{account}**")
     except Exception as e:
         await ctx.send(f"❌ Error tracking pet: {str(e)}")
 
