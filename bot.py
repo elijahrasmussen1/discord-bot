@@ -1161,6 +1161,7 @@ class FlipChaseView(View):
         self.current_winnings = current_winnings
         self.initial_bet = initial_bet
         self.rounds_won = rounds_won
+        self.game_resolved = False  # Track if game has been banked or lost
         
     @discord.ui.button(label="🎲 Chase (Double or Nothing)", style=discord.ButtonStyle.green)
     async def chase_button(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -1195,6 +1196,7 @@ class FlipChaseView(View):
             await interaction.message.edit(embed=embed, view=new_view)
         else:
             # Lost everything
+            self.game_resolved = True  # Mark game as resolved
             embed = discord.Embed(
                 title="💀 Chase Failed!",
                 description=f"**You lost!** The coin landed on **{outcome}**.\nYou lost all your winnings!",
@@ -1229,6 +1231,9 @@ class FlipChaseView(View):
         await interaction.response.defer()
         
         try:
+            # Mark game as resolved immediately to prevent double-refund on timeout
+            self.game_resolved = True
+            
             # Get user data
             user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
             
@@ -1285,8 +1290,13 @@ class FlipChaseView(View):
                 await interaction.followup.send(f"❌ Critical error banking winnings: {str(e)}\nPlease contact an admin with your game details.", ephemeral=True)
     
     async def on_timeout(self):
-        """Called when the view times out - refund the current winnings to the player."""
+        """Called when the view times out - refund the current winnings ONLY if game was not resolved."""
         try:
+            # Only refund if the game was not already resolved (banked or lost)
+            if self.game_resolved:
+                print(f"⏰ FlipChase timeout: Game already resolved for user {self.user_id}, no refund needed")
+                return
+            
             # Get user data and refund their current winnings
             user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
             
