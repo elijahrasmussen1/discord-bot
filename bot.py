@@ -2987,21 +2987,21 @@ lucky_number_games = {}
 crash_games = {}
 
 def calculate_lucky_number_multiplier(max_range):
-    """Calculate fair multiplier based on risk (odds of winning)."""
+    """Calculate fair multiplier based on risk (odds of winning) - NERFED."""
     if max_range <= 50:
-        return 40.0  # 1/50 = 2% chance → 40x return (80% RTP)
+        return 25.0  # 1/50 = 2% chance → 25x return (50% RTP)
     elif max_range <= 100:
-        return 80.0  # 1/100 = 1% chance → 80x return (80% RTP)
+        return 50.0  # 1/100 = 1% chance → 50x return (50% RTP)
     elif max_range <= 500:
-        return 400.0  # 1/500 = 0.2% chance → 400x return (80% RTP)
+        return 250.0  # 1/500 = 0.2% chance → 250x return (50% RTP)
     elif max_range <= 1000:
-        return 800.0  # 1/1000 = 0.1% chance → 800x return (80% RTP)
+        return 500.0  # 1/1000 = 0.1% chance → 500x return (50% RTP)
     elif max_range <= 2500:
-        return 2000.0  # 1/2500 = 0.04% chance → 2000x return (80% RTP)
+        return 1250.0  # 1/2500 = 0.04% chance → 1250x return (50% RTP)
     elif max_range <= 5000:
-        return 4000.0  # 1/5000 = 0.02% chance → 4000x return (80% RTP)
+        return 2500.0  # 1/5000 = 0.02% chance → 2500x return (50% RTP)
     else:
-        return 4000.0  # Cap at 5000
+        return 2500.0  # Cap at 5000
 
 @bot.command(name="luckynumber")
 async def luckynumber(ctx, amount: str = None, max_number: str = None):
@@ -3014,12 +3014,12 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
     After starting, use !pick <your_number> to make your guess.
     
     Risk levels:
-    - 50-50: Medium risk, 40x multiplier
-    - 51-100: High risk, 80x multiplier
-    - 101-500: Very high risk, 400x multiplier
-    - 501-1000: Extreme risk, 800x multiplier
-    - 1001-2500: Ultra risk, 2000x multiplier
-    - 2501-5000: Maximum risk, 4000x multiplier
+    - 50-50: Medium risk, 25x multiplier
+    - 51-100: High risk, 50x multiplier
+    - 101-500: Very high risk, 250x multiplier
+    - 501-1000: Extreme risk, 500x multiplier
+    - 1001-2500: Ultra risk, 1250x multiplier
+    - 2501-5000: Maximum risk, 2500x multiplier
     """
     try:
         if amount is None or max_number is None:
@@ -4611,7 +4611,7 @@ async def choptree(ctx, opponent: discord.Member, amount: str):
         embed.add_field(name="🏆 Prize", value=f"{format_money(bet_amount * 2)}", inline=True)
         embed.add_field(
             name="🎮 How to Play",
-            value="Take turns using `!chop` to cut sections of the tree. The player who makes the tree fall loses!",
+            value="Take turns using `!chop` to cut sections of the tree. The player who makes the tree fall loses!\n⏰ **60 seconds per turn** or you forfeit!",
             inline=False
         )
         
@@ -4651,7 +4651,8 @@ class LumberjackChallengeView(discord.ui.View):
             "max_health": tree_health,
             "current_turn": self.challenger.id,
             "turns_taken": 0,
-            "channel_id": interaction.channel.id
+            "channel_id": interaction.channel.id,
+            "turn_start_time": datetime.now()  # Track when turn started
         }
         
         lumberjack_games[self.challenger.id] = game_data
@@ -4675,6 +4676,7 @@ class LumberjackChallengeView(discord.ui.View):
             value=(
                 "• Each chop removes 1-3 tree health\n"
                 "• The player who reduces tree health to 0 loses!\n"
+                "• You have 60 seconds per turn or you forfeit!\n"
                 "• Think carefully about your timing!"
             ),
             inline=False
@@ -4718,8 +4720,56 @@ async def chop(ctx):
         
         # Check if it's user's turn
         if game_data["current_turn"] != ctx.author.id:
-            other_player = game_data["player1"] if game_data["current_turn"] == game_data["player1"] else game_data["player2"]
-            return await ctx.send(f"❌ It's <@{other_player}>'s turn!")
+            # Check if the current turn player has timed out (60 seconds)
+            time_since_turn = datetime.now() - game_data["turn_start_time"]
+            if time_since_turn.total_seconds() > 60:
+                # Current player timed out - they forfeit
+                forfeit_player_id = game_data["current_turn"]
+                winner_id = game_data["player1"] if forfeit_player_id == game_data["player2"] else game_data["player2"]
+                
+                # Update balances
+                c.execute("UPDATE users SET balance = balance - ? WHERE user_id = ?", (game_data["bet"], forfeit_player_id))
+                c.execute("UPDATE users SET balance = balance + ?, total_gambled = total_gambled + ? WHERE user_id = ?", 
+                         (game_data["bet"], game_data["bet"], winner_id))
+                conn.commit()
+                
+                # Log transactions
+                log_transaction(forfeit_player_id, "lumberjack_loss", game_data["bet"], 0, 0, f"Lost lumberjack game by timeout vs user {winner_id}")
+                log_transaction(winner_id, "lumberjack_win", game_data["bet"], 0, 0, f"Won lumberjack game by opponent timeout vs user {forfeit_player_id}")
+                await log_bet_activity(winner_id, game_data["bet"], "lumberjack", "win")
+                await log_bet_activity(forfeit_player_id, game_data["bet"], "lumberjack", "loss")
+                
+                # Forfeit embed
+                embed = discord.Embed(
+                    title="⏰ FORFEIT - TIME RAN OUT!",
+                    description=f"<@{forfeit_player_id}> took too long to chop (60 seconds)!",
+                    color=discord.Color.orange()
+                )
+                embed.add_field(
+                    name="🏆 Winner by Forfeit",
+                    value=f"<@{winner_id}>",
+                    inline=True
+                )
+                embed.add_field(
+                    name="💔 Loser",
+                    value=f"<@{forfeit_player_id}>",
+                    inline=True
+                )
+                embed.add_field(
+                    name="💰 Winnings",
+                    value=format_money(game_data["bet"] * 2),
+                    inline=False
+                )
+                embed.set_footer(text=f"Game ended at turn {game_data['turns_taken']}")
+                
+                # Clean up game
+                del lumberjack_games[game_data["player1"]]
+                del lumberjack_games[game_data["player2"]]
+                
+                return await ctx.send(embed=embed)
+            else:
+                other_player = game_data["player1"] if game_data["current_turn"] == game_data["player1"] else game_data["player2"]
+                return await ctx.send(f"❌ It's <@{other_player}>'s turn!")
         
         # Check if in correct channel
         if game_data["channel_id"] != ctx.channel.id:
@@ -4792,6 +4842,7 @@ async def chop(ctx):
         else:
             # Tree still standing - switch turns
             game_data["current_turn"] = game_data["player2"] if game_data["current_turn"] == game_data["player1"] else game_data["player1"]
+            game_data["turn_start_time"] = datetime.now()  # Reset turn timer
             
             # Create health bar
             health_percent = (game_data["tree_health"] / game_data["max_health"]) * 100
