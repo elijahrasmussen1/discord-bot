@@ -115,6 +115,42 @@ CREATE TABLE IF NOT EXISTS stock_items (
 )
 """)
 
+# Stock Market System
+c.execute("""
+CREATE TABLE IF NOT EXISTS stocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticker TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    category TEXT NOT NULL,
+    base_price REAL NOT NULL,
+    current_price REAL NOT NULL,
+    total_shares INTEGER DEFAULT 1000000,
+    available_shares INTEGER DEFAULT 1000000
+)
+""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS stock_prices (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stock_id INTEGER NOT NULL,
+    price REAL NOT NULL,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (stock_id) REFERENCES stocks (id)
+)
+""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS holdings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    stock_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    avg_purchase_price REAL NOT NULL,
+    UNIQUE(user_id, stock_id),
+    FOREIGN KEY (stock_id) REFERENCES stocks (id)
+)
+""")
+
 conn.commit()
 
 # Database migration: Add missing columns if they don't exist
@@ -134,6 +170,82 @@ try:
     conn.commit()
 except Exception as e:
     print(f"⚠️ Database migration error (non-fatal): {e}")
+
+# -----------------------------
+# STOCK MARKET INITIALIZATION
+# -----------------------------
+def initialize_stock_market():
+    """Initialize stock market with default stocks if not exists."""
+    try:
+        c.execute("SELECT COUNT(*) FROM stocks")
+        count = c.fetchone()[0]
+        
+        if count == 0:
+            # Initial stock list with diverse categories
+            initial_stocks = [
+                # Technology Stocks
+                ("TECH", "TechCorp", "Technology", 100.0),
+                ("BYTE", "ByteWorks", "Technology", 75.0),
+                ("DIGI", "DigiSoft", "Technology", 120.0),
+                ("CODE", "CodeLabs", "Technology", 95.0),
+                
+                # Food & Agriculture
+                ("FOOD", "FoodCo", "Food", 50.0),
+                ("FARM", "FarmFresh", "Food", 40.0),
+                ("MEAL", "MealMasters", "Food", 60.0),
+                
+                # Energy
+                ("VOLT", "VoltEnergy", "Energy", 110.0),
+                ("FUEL", "FuelMax", "Energy", 85.0),
+                ("SOLAR", "SolarPower", "Energy", 130.0),
+                
+                # Healthcare
+                ("MEDIC", "MediCare", "Healthcare", 150.0),
+                ("HEAL", "HealWell", "Healthcare", 125.0),
+                ("CURE", "CureTech", "Healthcare", 140.0),
+                
+                # Finance
+                ("BANK", "BankCorp", "Finance", 90.0),
+                ("COIN", "CoinTrade", "Finance", 105.0),
+                ("INVEST", "InvestPro", "Finance", 115.0),
+                
+                # Entertainment
+                ("PLAY", "PlayTime", "Entertainment", 70.0),
+                ("GAME", "GameZone", "Entertainment", 80.0),
+                ("STREAM", "StreamHub", "Entertainment", 95.0),
+                
+                # Transportation
+                ("RIDE", "RideShare", "Transportation", 65.0),
+                ("CARGO", "CargoMax", "Transportation", 55.0),
+                ("FLY", "FlyHigh", "Transportation", 100.0),
+            ]
+            
+            for ticker, name, category, base_price in initial_stocks:
+                c.execute("""
+                    INSERT INTO stocks (ticker, name, category, base_price, current_price)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (ticker, name, category, base_price, base_price))
+                
+                # Record initial price
+                stock_id = c.lastrowid
+                c.execute("""
+                    INSERT INTO stock_prices (stock_id, price)
+                    VALUES (?, ?)
+                """, (stock_id, base_price))
+            
+            conn.commit()
+            print(f"✅ Initialized stock market with {len(initial_stocks)} stocks")
+        else:
+            print(f"✅ Stock market already initialized with {count} stocks")
+    except Exception as e:
+        print(f"❌ Error initializing stock market: {e}")
+
+# Initialize stock market on startup
+initialize_stock_market()
+
+# Global variables for stock market
+donation_cooldowns = {}  # {user_id: expiry_timestamp}
+stock_market_cache = {}  # Cache for stock data to reduce DB queries
 
 # -----------------------------
 # HELPERS
@@ -245,6 +357,90 @@ def withdraw_balance(user_id, amount):
         (new_bal, new_req, new_total_withdrawn, user_id_db)
     )
     conn.commit()
+
+# -----------------------------
+# STOCK MARKET HELPERS
+# -----------------------------
+def get_stock_by_ticker(ticker):
+    """Get stock data by ticker symbol."""
+    c.execute("SELECT * FROM stocks WHERE ticker=?", (ticker.upper(),))
+    return c.fetchone()
+
+def get_all_stocks():
+    """Get all stocks from database."""
+    c.execute("SELECT * FROM stocks ORDER BY category, ticker")
+    return c.fetchall()
+
+def get_user_holdings(user_id):
+    """Get all stock holdings for a user."""
+    c.execute("""
+        SELECT h.*, s.ticker, s.name, s.current_price, s.category
+        FROM holdings h
+        JOIN stocks s ON h.stock_id = s.id
+        WHERE h.user_id = ?
+        ORDER BY s.ticker
+    """, (user_id,))
+    return c.fetchall()
+
+def calculate_portfolio_value(user_id):
+    """Calculate total value of user's stock portfolio."""
+    holdings = get_user_holdings(user_id)
+    total_value = sum(h[3] * h[6] for h in holdings)  # quantity * current_price
+    return int(total_value)
+
+def update_stock_price(stock_id, new_price):
+    """Update stock price and log the change."""
+    c.execute("UPDATE stocks SET current_price=? WHERE id=?", (new_price, stock_id))
+    c.execute("INSERT INTO stock_prices (stock_id, price) VALUES (?, ?)", (stock_id, new_price))
+    conn.commit()
+
+def apply_demand_price_change(stock_id, is_buy):
+    """Apply price change based on buy/sell demand."""
+    c.execute("SELECT current_price FROM stocks WHERE id=?", (stock_id,))
+    current_price = c.fetchone()[0]
+    
+    # Buy increases price by 0.5%, Sell decreases by 0.5%
+    change_percent = 0.005 if is_buy else -0.005
+    new_price = current_price * (1 + change_percent)
+    
+    # Ensure price doesn't go below 1.0
+    new_price = max(1.0, new_price)
+    
+    update_stock_price(stock_id, new_price)
+    return new_price
+
+def calculate_random_price_change(base_price, current_price, category):
+    """Calculate random price change based on category volatility."""
+    # Different categories have different volatility ranges
+    volatility_ranges = {
+        "Technology": (0.08, 0.15),      # 8-15% volatility
+        "Food": (0.03, 0.08),            # 3-8% volatility
+        "Energy": (0.06, 0.12),          # 6-12% volatility
+        "Healthcare": (0.04, 0.10),      # 4-10% volatility
+        "Finance": (0.05, 0.12),         # 5-12% volatility
+        "Entertainment": (0.07, 0.14),   # 7-14% volatility
+        "Transportation": (0.05, 0.11),  # 5-11% volatility
+    }
+    
+    min_vol, max_vol = volatility_ranges.get(category, (0.05, 0.10))
+    
+    # Random change within volatility range
+    change_percent = random.uniform(-max_vol, max_vol)
+    new_price = current_price * (1 + change_percent)
+    
+    # Apply mean reversion - prices tend to return toward base price
+    # If price is far from base, apply slight correction
+    deviation = (current_price - base_price) / base_price
+    if abs(deviation) > 0.5:  # More than 50% away from base
+        reversion_factor = -deviation * 0.05  # 5% reversion
+        new_price = new_price * (1 + reversion_factor)
+    
+    # Ensure price doesn't go below 10% of base price or above 500% of base price
+    min_price = base_price * 0.1
+    max_price = base_price * 5.0
+    new_price = max(min_price, min(max_price, new_price))
+    
+    return new_price
 
 # -----------------------------
 # ANTI-FRAUD & AUDIT LOGGING
@@ -2117,6 +2313,384 @@ async def petids(ctx):
             await ctx.send(embed=embed)
     except Exception as e:
         await ctx.send(f"❌ Error fetching pets: {str(e)}")
+
+# -----------------------------
+# STOCK MARKET COMMANDS
+# -----------------------------
+@bot.command(name="stocks")
+async def stocks(ctx, category: str = None):
+    """List all available stocks or stocks in a specific category."""
+    try:
+        if category:
+            # Show stocks in specific category
+            c.execute("""
+                SELECT ticker, name, category, current_price, base_price 
+                FROM stocks 
+                WHERE LOWER(category) = LOWER(?)
+                ORDER BY ticker
+            """, (category,))
+            stocks_data = c.fetchall()
+            
+            if not stocks_data:
+                await ctx.send(f"❌ No stocks found in category '{category}'. Use `!stocks` to see all categories.")
+                return
+            
+            title = f"📈 {category} Stocks"
+        else:
+            # Show all stocks grouped by category
+            stocks_data = get_all_stocks()
+            title = "📈 Stock Market"
+        
+        if not stocks_data:
+            await ctx.send("❌ No stocks available in the market.")
+            return
+        
+        # Group stocks by category for better display
+        categories = {}
+        for stock in stocks_data:
+            stock_id, ticker, name, cat, base_price, current_price, total_shares, available_shares = stock
+            if cat not in categories:
+                categories[cat] = []
+            
+            # Calculate price change percentage
+            price_change = ((current_price - base_price) / base_price) * 100
+            change_emoji = "📈" if price_change > 0 else "📉" if price_change < 0 else "➡️"
+            
+            categories[cat].append(
+                f"**{ticker}** - {name}\n"
+                f"💰 Price: {format_money(int(current_price))} {change_emoji} {price_change:+.2f}%"
+            )
+        
+        # Create embed
+        embed = discord.Embed(
+            title=title,
+            description="Use `!buy <ticker> <quantity>` to purchase stocks\n"
+                       "Use `!sell <ticker> <quantity>` to sell stocks\n"
+                       "Use `!portfolio` to view your holdings",
+            color=discord.Color.blue(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Add fields for each category
+        for cat, stock_list in categories.items():
+            field_value = "\n\n".join(stock_list)
+            # Split if too long
+            if len(field_value) > 1024:
+                # Split into multiple fields
+                chunks = []
+                current_chunk = []
+                current_length = 0
+                for stock_info in stock_list:
+                    if current_length + len(stock_info) + 2 > 1024:
+                        chunks.append("\n\n".join(current_chunk))
+                        current_chunk = [stock_info]
+                        current_length = len(stock_info)
+                    else:
+                        current_chunk.append(stock_info)
+                        current_length += len(stock_info) + 2
+                if current_chunk:
+                    chunks.append("\n\n".join(current_chunk))
+                
+                for i, chunk in enumerate(chunks):
+                    field_name = f"📊 {cat}" if i == 0 else f"📊 {cat} (cont.)"
+                    embed.add_field(name=field_name, value=chunk, inline=False)
+            else:
+                embed.add_field(name=f"📊 {cat}", value=field_value, inline=False)
+        
+        embed.set_footer(text="Prices update every hour | Virtual stock market system")
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching stocks: {str(e)}")
+        print(f"Error in stocks command: {e}")
+
+@bot.command(name="buy")
+async def buy_stock(ctx, ticker: str = None, quantity: str = None):
+    """Buy stocks from the market."""
+    if ticker is None or quantity is None:
+        await ctx.send("❌ Usage: `!buy <ticker> <quantity>`\nExample: `!buy TECH 10`")
+        return
+    
+    try:
+        # Parse quantity
+        qty = parse_money(quantity)
+        if qty <= 0:
+            await ctx.send("❌ Invalid quantity. Please enter a positive number.")
+            return
+        
+        # Get stock data
+        stock = get_stock_by_ticker(ticker)
+        if not stock:
+            await ctx.send(f"❌ Stock '{ticker.upper()}' not found. Use `!stocks` to see available stocks.")
+            return
+        
+        stock_id, ticker_db, name, category, base_price, current_price, total_shares, available_shares = stock
+        
+        # Check if enough shares available
+        if qty > available_shares:
+            await ctx.send(f"❌ Not enough shares available. Only {available_shares:,} shares of {ticker.upper()} are available.")
+            return
+        
+        # Calculate total cost
+        total_cost = int(current_price * qty)
+        
+        # Check user balance
+        user_data = get_user(ctx.author.id)
+        user_id, balance, req, gambled, total_gambled, total_withdrawn = user_data
+        
+        if balance < total_cost:
+            await ctx.send(f"❌ Insufficient funds! You need {format_money(total_cost)} but only have {format_money(balance)}.")
+            return
+        
+        # Execute purchase
+        # Update user balance
+        update_balance(ctx.author.id, -total_cost)
+        
+        # Update or create holding
+        c.execute("SELECT * FROM holdings WHERE user_id=? AND stock_id=?", (ctx.author.id, stock_id))
+        existing_holding = c.fetchone()
+        
+        if existing_holding:
+            # Update existing holding
+            holding_id, _, _, old_qty, old_avg_price = existing_holding
+            new_qty = old_qty + qty
+            # Calculate new average purchase price
+            new_avg_price = ((old_avg_price * old_qty) + (current_price * qty)) / new_qty
+            c.execute("""
+                UPDATE holdings 
+                SET quantity=?, avg_purchase_price=?
+                WHERE id=?
+            """, (new_qty, new_avg_price, holding_id))
+        else:
+            # Create new holding
+            c.execute("""
+                INSERT INTO holdings (user_id, stock_id, quantity, avg_purchase_price)
+                VALUES (?, ?, ?, ?)
+            """, (ctx.author.id, stock_id, qty, current_price))
+        
+        # Update available shares
+        c.execute("""
+            UPDATE stocks 
+            SET available_shares = available_shares - ?
+            WHERE id=?
+        """, (qty, stock_id))
+        
+        conn.commit()
+        
+        # Apply demand-based price increase
+        new_price = apply_demand_price_change(stock_id, True)
+        
+        # Log transaction
+        await log_transaction(
+            ctx.author.id, "STOCK_PURCHASE", total_cost, balance, balance - total_cost,
+            f"Bought {qty} shares of {ticker.upper()} at {format_money(int(current_price))} per share"
+        )
+        
+        # Create success embed
+        embed = discord.Embed(
+            title="✅ Stock Purchase Successful",
+            description=f"You purchased **{qty:,}** shares of **{ticker.upper()}**",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="Stock", value=f"{ticker.upper()} - {name}", inline=True)
+        embed.add_field(name="Quantity", value=f"{qty:,} shares", inline=True)
+        embed.add_field(name="Price per Share", value=format_money(int(current_price)), inline=True)
+        embed.add_field(name="Total Cost", value=format_money(total_cost), inline=True)
+        embed.add_field(name="New Balance", value=format_money(balance - total_cost), inline=True)
+        embed.add_field(name="New Stock Price", value=f"{format_money(int(new_price))} (+0.5%)", inline=True)
+        embed.set_footer(text="Use !portfolio to view all your holdings")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error processing purchase: {str(e)}")
+        print(f"Error in buy command: {e}")
+
+@bot.command(name="sell")
+async def sell_stock(ctx, ticker: str = None, quantity: str = None):
+    """Sell stocks from your portfolio."""
+    if ticker is None or quantity is None:
+        await ctx.send("❌ Usage: `!sell <ticker> <quantity>`\nExample: `!sell TECH 10`\nUse `!sell <ticker> all` to sell all shares.")
+        return
+    
+    try:
+        # Get stock data
+        stock = get_stock_by_ticker(ticker)
+        if not stock:
+            await ctx.send(f"❌ Stock '{ticker.upper()}' not found. Use `!stocks` to see available stocks.")
+            return
+        
+        stock_id, ticker_db, name, category, base_price, current_price, total_shares, available_shares = stock
+        
+        # Get user's holding
+        c.execute("SELECT * FROM holdings WHERE user_id=? AND stock_id=?", (ctx.author.id, stock_id))
+        holding = c.fetchone()
+        
+        if not holding:
+            await ctx.send(f"❌ You don't own any shares of {ticker.upper()}. Use `!portfolio` to view your holdings.")
+            return
+        
+        holding_id, _, _, owned_qty, avg_purchase_price = holding
+        
+        # Parse quantity
+        if quantity.lower() == "all":
+            qty = owned_qty
+        else:
+            qty = parse_money(quantity)
+            if qty <= 0:
+                await ctx.send("❌ Invalid quantity. Please enter a positive number or 'all'.")
+                return
+        
+        # Check if user owns enough shares
+        if qty > owned_qty:
+            await ctx.send(f"❌ You only own {owned_qty:,} shares of {ticker.upper()}. Cannot sell {qty:,} shares.")
+            return
+        
+        # Calculate total revenue
+        total_revenue = int(current_price * qty)
+        
+        # Calculate profit/loss
+        total_cost = avg_purchase_price * qty
+        profit_loss = total_revenue - int(total_cost)
+        
+        # Get user balance
+        user_data = get_user(ctx.author.id)
+        user_id, balance, req, gambled, total_gambled, total_withdrawn = user_data
+        
+        # Execute sale
+        # Update user balance
+        update_balance(ctx.author.id, total_revenue)
+        
+        # Update holding
+        if qty == owned_qty:
+            # Sell all shares, delete holding
+            c.execute("DELETE FROM holdings WHERE id=?", (holding_id,))
+        else:
+            # Sell partial shares, update quantity
+            c.execute("""
+                UPDATE holdings 
+                SET quantity=?
+                WHERE id=?
+            """, (owned_qty - qty, holding_id))
+        
+        # Update available shares
+        c.execute("""
+            UPDATE stocks 
+            SET available_shares = available_shares + ?
+            WHERE id=?
+        """, (qty, stock_id))
+        
+        conn.commit()
+        
+        # Apply demand-based price decrease
+        new_price = apply_demand_price_change(stock_id, False)
+        
+        # Log transaction
+        await log_transaction(
+            ctx.author.id, "STOCK_SALE", total_revenue, balance, balance + total_revenue,
+            f"Sold {qty} shares of {ticker.upper()} at {format_money(int(current_price))} per share"
+        )
+        
+        # Create success embed
+        profit_loss_emoji = "📈" if profit_loss > 0 else "📉" if profit_loss < 0 else "➡️"
+        embed_color = discord.Color.green() if profit_loss >= 0 else discord.Color.red()
+        
+        embed = discord.Embed(
+            title="✅ Stock Sale Successful",
+            description=f"You sold **{qty:,}** shares of **{ticker.upper()}**",
+            color=embed_color
+        )
+        embed.add_field(name="Stock", value=f"{ticker.upper()} - {name}", inline=True)
+        embed.add_field(name="Quantity", value=f"{qty:,} shares", inline=True)
+        embed.add_field(name="Price per Share", value=format_money(int(current_price)), inline=True)
+        embed.add_field(name="Total Revenue", value=format_money(total_revenue), inline=True)
+        embed.add_field(name="Profit/Loss", value=f"{profit_loss_emoji} {format_money(abs(profit_loss))}", inline=True)
+        embed.add_field(name="New Balance", value=format_money(balance + total_revenue), inline=True)
+        embed.add_field(name="New Stock Price", value=f"{format_money(int(new_price))} (-0.5%)", inline=True)
+        
+        if qty < owned_qty:
+            embed.add_field(name="Remaining Shares", value=f"{owned_qty - qty:,} shares", inline=True)
+        
+        embed.set_footer(text="Use !portfolio to view all your holdings")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error processing sale: {str(e)}")
+        print(f"Error in sell command: {e}")
+
+@bot.command(name="portfolio")
+async def portfolio(ctx, user: discord.Member = None):
+    """View your stock portfolio or another user's portfolio."""
+    try:
+        target_user = user if user else ctx.author
+        
+        # Get user's holdings
+        holdings = get_user_holdings(target_user.id)
+        
+        if not holdings:
+            if target_user == ctx.author:
+                await ctx.send("📊 You don't have any stocks yet. Use `!stocks` to see available stocks and `!buy` to purchase.")
+            else:
+                await ctx.send(f"📊 {target_user.display_name} doesn't have any stocks.")
+            return
+        
+        # Calculate portfolio statistics
+        total_value = 0
+        total_invested = 0
+        
+        embed = discord.Embed(
+            title=f"📊 {target_user.display_name}'s Stock Portfolio",
+            color=discord.Color.gold(),
+            timestamp=datetime.utcnow()
+        )
+        
+        # Add holdings
+        holdings_text = []
+        for holding in holdings:
+            holding_id, user_id, stock_id, quantity, avg_purchase_price, ticker, name, current_price, category = holding
+            
+            current_value = current_price * quantity
+            invested_value = avg_purchase_price * quantity
+            profit_loss = current_value - invested_value
+            profit_loss_pct = (profit_loss / invested_value) * 100 if invested_value > 0 else 0
+            
+            total_value += current_value
+            total_invested += invested_value
+            
+            pl_emoji = "📈" if profit_loss > 0 else "📉" if profit_loss < 0 else "➡️"
+            
+            holdings_text.append(
+                f"**{ticker}** - {name}\n"
+                f"📦 Quantity: {quantity:,} shares\n"
+                f"💰 Current Value: {format_money(int(current_value))}\n"
+                f"{pl_emoji} P/L: {format_money(int(abs(profit_loss)))} ({profit_loss_pct:+.2f}%)"
+            )
+        
+        # Add holdings to embed
+        for i, holding_text in enumerate(holdings_text):
+            embed.add_field(name=f"#{i+1}", value=holding_text, inline=True)
+        
+        # Calculate total profit/loss
+        total_pl = total_value - total_invested
+        total_pl_pct = (total_pl / total_invested) * 100 if total_invested > 0 else 0
+        pl_emoji = "📈" if total_pl > 0 else "📉" if total_pl < 0 else "➡️"
+        
+        # Add summary
+        summary = (
+            f"**Total Portfolio Value:** {format_money(int(total_value))}\n"
+            f"**Total Invested:** {format_money(int(total_invested))}\n"
+            f"**{pl_emoji} Total P/L:** {format_money(int(abs(total_pl)))} ({total_pl_pct:+.2f}%)"
+        )
+        embed.add_field(name="📈 Summary", value=summary, inline=False)
+        
+        embed.set_footer(text="Prices update every hour | Use !stocks to see current prices")
+        
+        await ctx.send(embed=embed)
+        
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching portfolio: {str(e)}")
+        print(f"Error in portfolio command: {e}")
 
 @bot.command(name="ticketclose")
 async def ticketclose(ctx, *, reason: str = "No reason provided."):
@@ -5454,6 +6028,42 @@ async def before_deposit_stats():
     await bot.wait_until_ready()
     print("✅ Deposit statistics task started")
 
+# -----------------------------
+# STOCK MARKET AUTOMATED UPDATES
+# -----------------------------
+@tasks.loop(hours=1)
+async def update_stock_prices():
+    """Update stock prices every hour with random market fluctuations."""
+    try:
+        print("🔄 Updating stock market prices...")
+        
+        # Get all stocks
+        stocks = get_all_stocks()
+        
+        for stock in stocks:
+            stock_id, ticker, name, category, base_price, current_price, total_shares, available_shares = stock
+            
+            # Calculate new price with random fluctuation
+            new_price = calculate_random_price_change(base_price, current_price, category)
+            
+            # Update price in database
+            update_stock_price(stock_id, new_price)
+            
+            # Calculate change for logging
+            change_pct = ((new_price - current_price) / current_price) * 100
+            print(f"  {ticker}: {current_price:.2f} → {new_price:.2f} ({change_pct:+.2f}%)")
+        
+        print(f"✅ Updated prices for {len(stocks)} stocks")
+        
+    except Exception as e:
+        print(f"❌ Error updating stock prices: {e}")
+
+@update_stock_prices.before_loop
+async def before_stock_price_updates():
+    """Wait until bot is ready before starting the task."""
+    await bot.wait_until_ready()
+    print("✅ Stock market price update task started (runs every hour)")
+
 
 # -----------------------------
 # STOCK/INVENTORY SYSTEM
@@ -6202,6 +6812,11 @@ async def on_ready():
     if not post_deposit_stats.is_running():
         post_deposit_stats.start()
         print("✅ Deposit statistics task started")
+    
+    # Start stock market price update task if not already running
+    if not update_stock_prices.is_running():
+        update_stock_prices.start()
+        print("✅ Stock market price update task started")
     
     # Initialize stock display if not exists
     try:
