@@ -754,18 +754,27 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         await ctx.send("❌ You cannot donate to bots!")
         return
     
-    # Check cooldown (1 hour)
+    # Check cooldown
     current_time = datetime.utcnow()
-    if ctx.author.id in donation_cooldowns:
-        last_donation = donation_cooldowns[ctx.author.id]
-        time_diff = current_time - last_donation
-        cooldown_remaining = timedelta(hours=1) - time_diff
-        
-        if cooldown_remaining.total_seconds() > 0:
-            minutes_remaining = int(cooldown_remaining.total_seconds() / 60)
-            seconds_remaining = int(cooldown_remaining.total_seconds() % 60)
-            await ctx.send(f"❌ **Donation Cooldown Active**\nYou can donate again in **{minutes_remaining}m {seconds_remaining}s**")
+    
+    # Initialize donation data for user if not exists
+    if ctx.author.id not in donation_data:
+        donation_data[ctx.author.id] = {'cooldown_until': None, 'donations': []}
+    
+    user_donation_data = donation_data[ctx.author.id]
+    
+    # Check if user is on cooldown
+    if user_donation_data['cooldown_until'] is not None:
+        if current_time < user_donation_data['cooldown_until']:
+            time_remaining = user_donation_data['cooldown_until'] - current_time
+            minutes_remaining = int(time_remaining.total_seconds() / 60)
+            seconds_remaining = int(time_remaining.total_seconds() % 60)
+            await ctx.send(f"❌ **Donation Cooldown Active**\nYou can donate again in **{minutes_remaining}m {seconds_remaining}s**\nYou've reached the 250M donation limit.")
             return
+        else:
+            # Cooldown expired, reset
+            user_donation_data['cooldown_until'] = None
+            user_donation_data['donations'] = []
     
     try:
         # Parse donation amount
@@ -776,9 +785,16 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
             await ctx.send("❌ Minimum donation amount is 1,000,000$")
             return
         
-        # Maximum donation amount
-        if value > MAX_DONATION:
-            await ctx.send(f"❌ Maximum donation amount is {MAX_DONATION:,}$ (150M)")
+        # Calculate total donations in current period (before cooldown was triggered)
+        total_donated = sum(amt for amt, _ in user_donation_data['donations'])
+        
+        # Check if this donation would exceed threshold
+        if total_donated + value > DONATION_THRESHOLD:
+            remaining_allowance = DONATION_THRESHOLD - total_donated
+            if remaining_allowance > 0:
+                await ctx.send(f"❌ This donation would exceed your 250M limit!\nYou've donated: {total_donated:,}$\nRemaining allowance: {remaining_allowance:,}$\nRequested: {value:,}$")
+            else:
+                await ctx.send(f"❌ You've reached your 250M donation limit!\nPlease wait for cooldown to reset.")
             return
         
         # Get donor's balance
@@ -820,8 +836,16 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
             await ctx.send(f"❌ Transaction failed verification. Operation rolled back.\nExpected: Donor={expected_donor_bal:,}, Recipient={expected_recipient_bal:,}\nActual: Donor={donor_new_bal:,}, Recipient={recipient_new_bal:,}")
             return
         
-        # Set cooldown after successful transaction
-        donation_cooldowns[ctx.author.id] = current_time
+        # Record this donation
+        user_donation_data['donations'].append((value, current_time))
+        total_donated_now = sum(amt for amt, _ in user_donation_data['donations'])
+        
+        # Check if threshold reached - trigger cooldown
+        if total_donated_now >= DONATION_THRESHOLD:
+            user_donation_data['cooldown_until'] = current_time + timedelta(hours=DONATION_COOLDOWN_HOURS)
+            cooldown_triggered = True
+        else:
+            cooldown_triggered = False
         
         # Log transaction for donor
         await log_transaction(
@@ -859,7 +883,14 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         )
         embed.add_field(name="📤 Your New Balance", value=f"{donor_new_bal:,}$", inline=True)
         embed.add_field(name="📥 Recipient's New Balance", value=f"{recipient_new_bal:,}$", inline=True)
-        embed.set_footer(text="Next donation available in 1 hour")
+        embed.add_field(name="💰 Total Donated", value=f"{total_donated_now:,}$ / 250M", inline=False)
+        
+        if cooldown_triggered:
+            embed.set_footer(text="⚠️ You've reached 250M donated! 1-hour cooldown activated.")
+            embed.color = discord.Color.orange()
+        else:
+            remaining = DONATION_THRESHOLD - total_donated_now
+            embed.set_footer(text=f"Remaining donation allowance: {remaining:,}$")
         
         await ctx.send(embed=embed)
         
@@ -1192,10 +1223,13 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
 # Global dictionary to track active flip & chase games
 active_flip_chase = {}
 
-# Global dictionary to track donation cooldowns (user_id: datetime)
-donation_cooldowns = {}
-# Maximum donation amount
-MAX_DONATION = 150_000_000  # 150M
+# Global dictionary to track donation data per user
+# Structure: {user_id: {'cooldown_until': datetime, 'donations': [(amount, timestamp), ...]}}
+donation_data = {}
+# Maximum cumulative donation before cooldown
+DONATION_THRESHOLD = 250_000_000  # 250M total
+# Cooldown duration
+DONATION_COOLDOWN_HOURS = 1
 
 class FlipChaseView(View):
     def __init__(self, user_id, current_winnings, initial_bet, rounds_won):
