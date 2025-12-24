@@ -890,7 +890,7 @@ async def assist(ctx):
         "**!cf [amount] [heads/tails]** - Simple coinflip! Bet on heads or tails\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
-        "**!luckynumber [amount] [1-5000]** - Start lucky number game\n"
+        "**!luckynumber [amount] [50-5000]** - Start lucky number game\n"
         "**!pick [number]** - Pick your lucky number\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!blackjack [amount]** - Play Blackjack! Beat the dealer without going over 21\n"
@@ -2988,9 +2988,7 @@ crash_games = {}
 
 def calculate_lucky_number_multiplier(max_range):
     """Calculate fair multiplier based on risk (odds of winning)."""
-    if max_range <= 10:
-        return 8.0  # 1/10 = 10% chance → 8x return (80% RTP, house edge 20%)
-    elif max_range <= 50:
+    if max_range <= 50:
         return 40.0  # 1/50 = 2% chance → 40x return (80% RTP)
     elif max_range <= 100:
         return 80.0  # 1/100 = 1% chance → 80x return (80% RTP)
@@ -3016,17 +3014,16 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
     After starting, use !pick <your_number> to make your guess.
     
     Risk levels:
-    - 1-10: Low risk, 8x multiplier
-    - 1-50: Medium risk, 40x multiplier
-    - 1-100: High risk, 80x multiplier
-    - 1-500: Very high risk, 400x multiplier
-    - 1-1000: Extreme risk, 800x multiplier
-    - 1-2500: Ultra risk, 2000x multiplier
-    - 1-5000: Maximum risk, 4000x multiplier
+    - 50-50: Medium risk, 40x multiplier
+    - 51-100: High risk, 80x multiplier
+    - 101-500: Very high risk, 400x multiplier
+    - 501-1000: Extreme risk, 800x multiplier
+    - 1001-2500: Ultra risk, 2000x multiplier
+    - 2501-5000: Maximum risk, 4000x multiplier
     """
     try:
         if amount is None or max_number is None:
-            await ctx.send("❌ Usage: `!luckynumber <amount> <1-5000>`\nExample: `!luckynumber 10m 100`")
+            await ctx.send("❌ Usage: `!luckynumber <amount> <50-5000>`\nExample: `!luckynumber 10m 100`")
             return
 
         # Parse bet amount
@@ -3042,8 +3039,8 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
             await ctx.send("❌ Invalid number range! Must be a number between 1-5000.")
             return
 
-        if max_num < 10 or max_num > 5000:
-            await ctx.send("❌ Number range must be between 10-5000! Minimum is 10.")
+        if max_num < 50 or max_num > 5000:
+            await ctx.send("❌ Number range must be between 50-5000! Minimum is 50.")
             return
 
         # Get user data
