@@ -151,6 +151,29 @@ CREATE TABLE IF NOT EXISTS holdings (
 )
 """)
 
+# Spin Wheel system tables
+c.execute("""
+CREATE TABLE IF NOT EXISTS spin_wheel_data (
+    user_id INTEGER PRIMARY KEY,
+    free_spins INTEGER DEFAULT 0,
+    purchased_spins INTEGER DEFAULT 0,
+    last_spin_time TEXT,
+    total_spins_used INTEGER DEFAULT 0,
+    total_winnings INTEGER DEFAULT 0
+)
+""")
+
+c.execute("""
+CREATE TABLE IF NOT EXISTS spin_wheel_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    prize_type TEXT NOT NULL,
+    prize_value TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    spin_type TEXT NOT NULL
+)
+""")
+
 conn.commit()
 
 # Database migration: Add missing columns if they don't exist
@@ -246,6 +269,10 @@ initialize_stock_market()
 # Global variables for stock market
 donation_cooldowns = {}  # {user_id: expiry_timestamp}
 stock_market_cache = {}  # Cache for stock data to reduce DB queries
+
+# Global variables for spin wheel
+spin_wheel_active = False  # Tracks if wheel has been activated by owner
+current_special_prize = None  # {pet_id: int, pet_name: str} for 0.5% stock pet prize
 
 # -----------------------------
 # HELPERS
@@ -6932,6 +6959,559 @@ async def on_message(message):
             }
         except Exception as e:
             print(f"Error reposting stick message: {e}")
+
+# -----------------------------
+# SPIN WHEEL SYSTEM
+# -----------------------------
+
+def get_spin_data(user_id: int):
+    """Get or create spin data for user."""
+    c.execute("SELECT * FROM spin_wheel_data WHERE user_id = ?", (user_id,))
+    data = c.fetchone()
+    if not data:
+        c.execute("""
+            INSERT INTO spin_wheel_data (user_id, free_spins, purchased_spins, last_spin_time, total_spins_used, total_winnings)
+            VALUES (?, 0, 0, NULL, 0, 0)
+        """, (user_id,))
+        conn.commit()
+        return (user_id, 0, 0, None, 0, 0)
+    return data
+
+def update_spin_data(user_id: int, free_spins: int = None, purchased_spins: int = None, last_spin_time: str = None):
+    """Update user spin data."""
+    updates = []
+    params = []
+    
+    if free_spins is not None:
+        updates.append("free_spins = ?")
+        params.append(free_spins)
+    if purchased_spins is not None:
+        updates.append("purchased_spins = ?")
+        params.append(purchased_spins)
+    if last_spin_time is not None:
+        updates.append("last_spin_time = ?")
+        params.append(last_spin_time)
+    
+    if updates:
+        params.append(user_id)
+        c.execute(f"UPDATE spin_wheel_data SET {', '.join(updates)} WHERE user_id = ?", params)
+        conn.commit()
+
+def check_and_grant_daily_spin(user_id: int):
+    """Check if user should receive their daily spin (24h passed since last spin)."""
+    data = get_spin_data(user_id)
+    last_spin_time = data[3]
+    
+    if last_spin_time is None:
+        # Never spun before, no daily spin yet
+        return False
+    
+    last_spin = datetime.fromisoformat(last_spin_time)
+    time_since_spin = datetime.now() - last_spin
+    
+    # If 24 hours passed and they used their previous spin, grant new one
+    if time_since_spin >= timedelta(hours=24) and data[1] == 0:  # free_spins == 0
+        update_spin_data(user_id, free_spins=1)
+        return True
+    
+    return False
+
+def spin_wheel():
+    """Execute a wheel spin and return the prize."""
+    import secrets
+    roll = secrets.randbelow(200)  # 0-199 for precise percentages
+    
+    # Prize distribution (total 200 = 100%)
+    # 55% (110/200) → 3M
+    # 34% (68/200) → 10M
+    # 2% (4/200) → 25M
+    # 1% (2/200) → 50M
+    # 0.5% (1/200) → Stock Pet
+    # 0.5% (1/200) → 200M
+    
+    if roll < 110:  # 0-109: 55%
+        return {"type": "money", "value": 3_000_000, "display": "3M💰"}
+    elif roll < 178:  # 110-177: 34%
+        return {"type": "money", "value": 10_000_000, "display": "10M💰"}
+    elif roll < 182:  # 178-181: 2%
+        return {"type": "money", "value": 25_000_000, "display": "25M💰"}
+    elif roll < 184:  # 182-183: 1%
+        return {"type": "money", "value": 50_000_000, "display": "50M💰"}
+    elif roll < 185:  # 184: 0.5%
+        return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
+    else:  # 185-199: 0.5%+
+        return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
+
+class SpinWheelView(View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=180)
+        self.user_id = user_id
+        self.spinning = False
+        
+    @discord.ui.button(label="SPIN!", style=discord.ButtonStyle.success, emoji="🎰")
+    async def spin_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This isn't your spin wheel!", ephemeral=True)
+            return
+        
+        if self.spinning:
+            await interaction.response.send_message("❌ Already spinning!", ephemeral=True)
+            return
+        
+        # Check if user has spins
+        data = get_spin_data(self.user_id)
+        free_spins = data[1]
+        purchased_spins = data[2]
+        total_spins = free_spins + purchased_spins
+        
+        if total_spins <= 0:
+            await interaction.response.send_message("❌ You don't have any spins! Use !buyspin to purchase more.", ephemeral=True)
+            return
+        
+        self.spinning = True
+        
+        # Deduct a spin (prefer free spins first)
+        if free_spins > 0:
+            update_spin_data(self.user_id, free_spins=free_spins - 1)
+            spin_type = "free"
+        else:
+            update_spin_data(self.user_id, purchased_spins=purchased_spins - 1)
+            spin_type = "purchased"
+        
+        # Update last spin time
+        update_spin_data(self.user_id, last_spin_time=datetime.now().isoformat())
+        
+        # Create spinning animation
+        prizes = ["3M💰", "10M💰", "25M💰", "50M💰", "🐾PET🐾", "200M💰💎"]
+        
+        # Animate the spin
+        animation_embed = discord.Embed(
+            title="🎰 SPINNING THE WHEEL! 🎰",
+            description="",
+            color=discord.Color.gold()
+        )
+        
+        await interaction.response.edit_message(embed=animation_embed)
+        
+        # Show animation frames
+        for i in range(12):
+            prize_list = "\n".join([f"{'▶️' if j == i % len(prizes) else '⚪'} {prizes[j]}" for j in range(len(prizes))])
+            animation_embed.description = f"```\n{prize_list}\n```"
+            await interaction.edit_original_response(embed=animation_embed)
+            await asyncio.sleep(0.15)
+        
+        # Get actual prize
+        prize = spin_wheel()
+        
+        # Process the prize
+        result_embed = discord.Embed(
+            title="🎉 WHEEL RESULT! 🎉",
+            color=discord.Color.green() if prize["type"] == "money" else discord.Color.purple()
+        )
+        
+        if prize["type"] == "money":
+            # Credit money
+            bal_before = get_balance(self.user_id)
+            update_balance(self.user_id, prize["value"])
+            bal_after = get_balance(self.user_id)
+            
+            result_embed.add_field(
+                name="🎁 YOU WON",
+                value=f"**{prize['display']}**",
+                inline=False
+            )
+            result_embed.add_field(
+                name="💵 Balance Update",
+                value=f"{format_money(bal_before)} ➔ {format_money(bal_after)}",
+                inline=False
+            )
+            
+            # Log transaction
+            log_transaction(self.user_id, "spin_win", prize["value"], bal_before, bal_after, 
+                          f"Spin wheel win - {spin_type} spin")
+            
+            # Update stats
+            c.execute("""
+                UPDATE spin_wheel_data 
+                SET total_spins_used = total_spins_used + 1,
+                    total_winnings = total_winnings + ?
+                WHERE user_id = ?
+            """, (prize["value"], self.user_id))
+            conn.commit()
+            
+        elif prize["type"] == "pet":
+            # Special pet prize
+            global current_special_prize
+            if current_special_prize:
+                result_embed.add_field(
+                    name="🎁 MEGA WIN! 🐾",
+                    value=f"**You won: {current_special_prize['pet_name']}**\n\n"
+                          f"Contact an owner to claim your prize!\n"
+                          f"Pet ID: #{current_special_prize['pet_id']}",
+                    inline=False
+                )
+            else:
+                # Fallback if no special prize set
+                result_embed.add_field(
+                    name="🎁 MEGA WIN! 🐾",
+                    value=f"**You won a SPECIAL PRIZE!**\n\n"
+                          f"Contact an owner to claim your stock pet!",
+                    inline=False
+                )
+            
+            # Update stats
+            c.execute("""
+                UPDATE spin_wheel_data 
+                SET total_spins_used = total_spins_used + 1
+                WHERE user_id = ?
+            """, (self.user_id,))
+            conn.commit()
+        
+        # Record in history
+        c.execute("""
+            INSERT INTO spin_wheel_history (user_id, prize_type, prize_value, timestamp, spin_type)
+            VALUES (?, ?, ?, ?, ?)
+        """, (self.user_id, prize["type"], str(prize["value"]), datetime.now().isoformat(), spin_type))
+        conn.commit()
+        
+        # Update remaining spins display
+        data = get_spin_data(self.user_id)
+        result_embed.set_footer(text=f"Remaining Spins: {data[1]} Free + {data[2]} Purchased")
+        
+        self.spinning = False
+        await interaction.edit_original_response(embed=result_embed, view=self)
+    
+    @discord.ui.button(label="Buy Spin", style=discord.ButtonStyle.primary, emoji="💰")
+    async def buy_spin_button(self, interaction: discord.Interaction, button: Button):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This isn't your spin wheel!", ephemeral=True)
+            return
+        
+        # Show purchase options
+        view = BuySpinView(self.user_id)
+        embed = discord.Embed(
+            title="💰 Purchase Spins",
+            description="Select how many spins you'd like to buy:",
+            color=discord.Color.blue()
+        )
+        embed.add_field(name="1 Spin", value="10M 💵", inline=True)
+        embed.add_field(name="3 Spins", value="30M 💵", inline=True)
+        embed.set_footer(text="Purchased spins stack and don't expire!")
+        
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+class BuySpinView(View):
+    def __init__(self, user_id: int):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+    
+    @discord.ui.button(label="1 Spin (10M)", style=discord.ButtonStyle.success, emoji="1️⃣")
+    async def buy_one(self, interaction: discord.Interaction, button: Button):
+        await self.purchase_spins(interaction, 1, 10_000_000)
+    
+    @discord.ui.button(label="3 Spins (30M)", style=discord.ButtonStyle.success, emoji="3️⃣")
+    async def buy_three(self, interaction: discord.Interaction, button: Button):
+        await self.purchase_spins(interaction, 3, 30_000_000)
+    
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger, emoji="❌")
+    async def cancel(self, interaction: discord.Interaction, button: Button):
+        await interaction.response.edit_message(content="❌ Purchase cancelled.", embed=None, view=None)
+    
+    async def purchase_spins(self, interaction: discord.Interaction, count: int, cost: int):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("❌ This isn't your purchase menu!", ephemeral=True)
+            return
+        
+        # Check balance
+        balance = get_balance(self.user_id)
+        if balance < cost:
+            await interaction.response.edit_message(
+                content=f"❌ Insufficient funds! You need {format_money(cost)} but only have {format_money(balance)}.",
+                embed=None,
+                view=None
+            )
+            return
+        
+        # Process purchase
+        bal_before = balance
+        update_balance(self.user_id, -cost)
+        bal_after = get_balance(self.user_id)
+        
+        # Add purchased spins
+        data = get_spin_data(self.user_id)
+        purchased_spins = data[2]
+        update_spin_data(self.user_id, purchased_spins=purchased_spins + count)
+        
+        # Log transaction
+        log_transaction(self.user_id, "spin_purchase", -cost, bal_before, bal_after,
+                       f"Purchased {count} spin(s)")
+        
+        # Success message
+        embed = discord.Embed(
+            title="✅ Purchase Successful!",
+            description=f"You purchased **{count} spin(s)** for {format_money(cost)}",
+            color=discord.Color.green()
+        )
+        embed.add_field(
+            name="Balance Update",
+            value=f"{format_money(bal_before)} ➔ {format_money(bal_after)}",
+            inline=False
+        )
+        embed.add_field(
+            name="Total Spins",
+            value=f"Free: {data[1]} | Purchased: {purchased_spins + count}",
+            inline=False
+        )
+        
+        await interaction.response.edit_message(content=None, embed=embed, view=None)
+
+@bot.command(name="spinwheel")
+async def spinwheel(ctx):
+    """Spin the daily wheel for prizes!"""
+    global spin_wheel_active
+    
+    if not spin_wheel_active:
+        await ctx.send("❌ The spin wheel hasn't been activated yet! Wait for an owner to use !activatewheel")
+        return
+    
+    # Check and grant daily spin if applicable
+    check_and_grant_daily_spin(ctx.author.id)
+    
+    # Get spin data
+    data = get_spin_data(ctx.author.id)
+    free_spins = data[1]
+    purchased_spins = data[2]
+    total_spins = free_spins + purchased_spins
+    last_spin_time = data[3]
+    
+    # Create wheel embed
+    embed = discord.Embed(
+        title="🎰 ELI'S MEGA SPIN WHEEL 🎰",
+        description="Press **SPIN!** to test your luck!\n\n"
+                    "**Prize Pool:**\n"
+                    "💰 3M (55%)\n"
+                    "💰 10M (34%)\n"
+                    "💰 25M (2%)\n"
+                    "💰 50M (1%)\n"
+                    "🐾 Stock Pet (0.5%)\n"
+                    "💎 200M (0.5%)",
+        color=discord.Color.gold()
+    )
+    
+    # Show spin status
+    if last_spin_time:
+        last_spin = datetime.fromisoformat(last_spin_time)
+        time_until_next = last_spin + timedelta(hours=24) - datetime.now()
+        if time_until_next.total_seconds() > 0:
+            hours = int(time_until_next.total_seconds() // 3600)
+            minutes = int((time_until_next.total_seconds() % 3600) // 60)
+            embed.add_field(
+                name="⏰ Next Free Spin",
+                value=f"In {hours}h {minutes}m" if free_spins == 0 else "Ready!",
+                inline=True
+            )
+    else:
+        embed.add_field(
+            name="⏰ Next Free Spin",
+            value="Ready!",
+            inline=True
+        )
+    
+    embed.add_field(
+        name="🎫 Available Spins",
+        value=f"Free: **{free_spins}** | Purchased: **{purchased_spins}**",
+        inline=True
+    )
+    
+    if total_spins == 0:
+        embed.add_field(
+            name="💵 No Spins?",
+            value="Use the **Buy Spin** button or !buyspin",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Total Spins Used: {data[4]} | Total Won: {format_money(data[5])}")
+    
+    view = SpinWheelView(ctx.author.id)
+    await ctx.send(embed=embed, view=view)
+
+@bot.command(name="buyspin")
+async def buyspin(ctx):
+    """Purchase additional spins for 10M each."""
+    global spin_wheel_active
+    
+    if not spin_wheel_active:
+        await ctx.send("❌ The spin wheel hasn't been activated yet!")
+        return
+    
+    # Show purchase menu
+    view = BuySpinView(ctx.author.id)
+    embed = discord.Embed(
+        title="💰 Purchase Spins",
+        description="Select how many spins you'd like to buy:\n\n"
+                    "**Purchased spins:**\n"
+                    "✅ Stack with free spins\n"
+                    "✅ Never expire\n"
+                    "✅ Don't affect daily spin timer",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="1 Spin", value="10M 💵", inline=True)
+    embed.add_field(name="3 Spins", value="30M 💵", inline=True)
+    
+    balance = get_balance(ctx.author.id)
+    embed.set_footer(text=f"Your Balance: {format_money(balance)}")
+    
+    await ctx.send(embed=embed, view=view)
+
+@bot.command(name="activatewheel")
+@commands.has_any_role("Owner", "Co-owner")
+async def activatewheel(ctx):
+    """Owner command: Activate the spin wheel and grant all members 1 free spin."""
+    global spin_wheel_active
+    
+    if spin_wheel_active:
+        await ctx.send("❌ The spin wheel is already activated!")
+        return
+    
+    # Activate the wheel
+    spin_wheel_active = True
+    
+    # Get all members with @member role
+    guild = bot.get_guild(GUILD_ID)
+    if not guild:
+        await ctx.send("❌ Could not find guild!")
+        return
+    
+    member_role = discord.utils.get(guild.roles, name="member")
+    if not member_role:
+        await ctx.send("⚠️ Warning: Could not find @member role. Wheel activated but no spins granted.")
+        return
+    
+    # Grant 1 free spin to all members
+    count = 0
+    for member in member_role.members:
+        if not member.bot:
+            # Get or create spin data
+            get_spin_data(member.id)
+            # Grant 1 free spin
+            update_spin_data(member.id, free_spins=1)
+            count += 1
+    
+    embed = discord.Embed(
+        title="🎰 SPIN WHEEL ACTIVATED! 🎰",
+        description=f"The daily spin wheel is now live!\n\n"
+                    f"✅ Granted **1 free spin** to **{count} members**\n\n"
+                    f"Players can now use !spinwheel to play!",
+        color=discord.Color.green()
+    )
+    await ctx.send(embed=embed)
+
+@bot.command(name="addspin")
+@commands.has_any_role("Owner", "Co-owner")
+async def addspin(ctx, member: discord.Member, amount: int = 1):
+    """Owner command: Gift spins to a specific user."""
+    if amount < 1:
+        await ctx.send("❌ Amount must be at least 1!")
+        return
+    
+    if amount > 100:
+        await ctx.send("❌ Maximum 100 spins at once!")
+        return
+    
+    # Get current data
+    data = get_spin_data(member.id)
+    purchased_spins = data[2]
+    
+    # Add spins (as purchased so they stack)
+    update_spin_data(member.id, purchased_spins=purchased_spins + amount)
+    
+    embed = discord.Embed(
+        title="🎁 Spins Gifted!",
+        description=f"Added **{amount} spin(s)** to {member.mention}",
+        color=discord.Color.green()
+    )
+    embed.add_field(
+        name="New Total",
+        value=f"Free: {data[1]} | Purchased: {purchased_spins + amount}",
+        inline=False
+    )
+    
+    await ctx.send(embed=embed)
+    
+    # Notify the member
+    try:
+        dm_embed = discord.Embed(
+            title="🎁 You received free spins!",
+            description=f"An owner gifted you **{amount} spin(s)**!\n\nUse !spinwheel to play!",
+            color=discord.Color.gold()
+        )
+        await member.send(embed=dm_embed)
+    except:
+        pass  # DMs disabled
+
+@bot.command(name="setspecialprize")
+@commands.has_any_role("Owner", "Co-owner")
+async def setspecialprize(ctx, pet_id: int, *, pet_name: str):
+    """Owner command: Set the special stock pet prize for the 0.5% win."""
+    global current_special_prize
+    
+    current_special_prize = {
+        "pet_id": pet_id,
+        "pet_name": pet_name
+    }
+    
+    embed = discord.Embed(
+        title="✅ Special Prize Set!",
+        description=f"The 0.5% stock pet prize is now:\n\n"
+                    f"**{pet_name}** (ID: #{pet_id})",
+        color=discord.Color.purple()
+    )
+    await ctx.send(embed=embed)
+
+@bot.command(name="wheelstats")
+async def wheelstats(ctx, member: discord.Member = None):
+    """View spin wheel statistics."""
+    target = member or ctx.author
+    
+    data = get_spin_data(target.id)
+    
+    embed = discord.Embed(
+        title=f"🎰 {target.display_name}'s Wheel Stats",
+        color=discord.Color.blue()
+    )
+    
+    embed.add_field(
+        name="Available Spins",
+        value=f"Free: **{data[1]}**\nPurchased: **{data[2]}**",
+        inline=True
+    )
+    
+    embed.add_field(
+        name="Statistics",
+        value=f"Total Spins: **{data[4]}**\nTotal Winnings: **{format_money(data[5])}**",
+        inline=True
+    )
+    
+    if data[3]:
+        last_spin = datetime.fromisoformat(data[3])
+        time_until_next = last_spin + timedelta(hours=24) - datetime.now()
+        if time_until_next.total_seconds() > 0:
+            hours = int(time_until_next.total_seconds() // 3600)
+            minutes = int((time_until_next.total_seconds() % 3600) // 60)
+            embed.add_field(
+                name="Next Free Spin",
+                value=f"In {hours}h {minutes}m",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Next Free Spin",
+                value="Ready! (Spin to claim)",
+                inline=False
+            )
+    
+    embed.set_thumbnail(url=target.display_avatar.url)
+    await ctx.send(embed=embed)
 
 # -----------------------------
 # RUN BOT
