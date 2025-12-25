@@ -176,6 +176,17 @@ CREATE TABLE IF NOT EXISTS spin_wheel_history (
 )
 """)
 
+# Add migration for daily_purchased and last_purchase_date columns if they don't exist
+try:
+    c.execute("ALTER TABLE spin_wheel_data ADD COLUMN daily_purchased INTEGER DEFAULT 0")
+except:
+    pass  # Column already exists
+
+try:
+    c.execute("ALTER TABLE spin_wheel_data ADD COLUMN last_purchase_date TEXT")
+except:
+    pass  # Column already exists
+
 conn.commit()
 
 # Database migration: Add missing columns if they don't exist
