@@ -7893,6 +7893,29 @@ async def autowinpet(ctx):
     except Exception as e:
         print(f"Error notifying owners about test pet win: {e}")
 
+@bot.command(name="ownermessage")
+async def ownermessage(ctx, channel: discord.TextChannel, *, message: str):
+    """Owner command: Send a message as the bot to any channel.
+    
+    Usage: !ownermessage #channel-name Your message here
+    Example: !ownermessage #announcements Welcome to the server!
+    """
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
+    try:
+        # Send the message to the target channel as the bot
+        await channel.send(message)
+        
+        # Confirm to the owner (in their command channel)
+        await ctx.send(f"✅ Message sent to {channel.mention}!")
+    except discord.Forbidden:
+        await ctx.send(f"❌ I don't have permission to send messages in {channel.mention}!")
+    except Exception as e:
+        await ctx.send(f"❌ An error occurred: {str(e)}")
+
 @bot.command(name="wheelstats")
 async def wheelstats(ctx, member: discord.Member = None):
     """View spin wheel statistics."""
