@@ -7693,7 +7693,6 @@ async def spincom(ctx):
     await ctx.send(embed=embed)
 
 @bot.command(name="ownerdonation")
-@commands.check(is_owner)
 async def ownerdonation(ctx, recipient: discord.Member, value: str):
     """
     Owner command to donate to users with no limits or cooldowns.
@@ -7701,6 +7700,11 @@ async def ownerdonation(ctx, recipient: discord.Member, value: str):
     Usage: !ownerdonation @user <amount>
     Example: !ownerdonation @John 500m
     """
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
     # Parse amount
     try:
         parsed_value = parse_money(value)
