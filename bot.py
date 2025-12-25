@@ -5598,42 +5598,45 @@ class GamesView(discord.ui.View):
         )
         embed1.set_footer(text="Page 2/10 • Use the buttons below to see other games")
         pages.append(embed1)
+        
+        # Page 3: FlipChase
+        embed2 = discord.Embed(
             title="🎲 Flip & Chase",
             description="**Progressive double-or-nothing game - Chase for bigger wins or bank anytime!**",
             color=discord.Color.gold()
         )
-        embed1.add_field(
+        embed2.add_field(
             name="📋 Command",
             value="`!flipchase <amount>`",
             inline=False
         )
-        embed1.add_field(
+        embed2.add_field(
             name="💡 Example",
             value="`!flipchase 10m`",
             inline=False
         )
-        embed1.add_field(
+        embed2.add_field(
             name="🎮 How to Play",
             value="1. Bet an amount to start\n2. Win the first flip to start chasing\n3. **Chase**: Double your winnings (risk losing all)\n4. **Bank**: Keep your current winnings safe\n5. Lose any flip = lose everything!",
             inline=False
         )
-        embed1.add_field(
+        embed2.add_field(
             name="💰 Multipliers",
             value="**Round 1**: 2x\n**Round 2**: 4x\n**Round 3**: 8x\n**Round 4**: 16x\n**And so on...**",
             inline=True
         )
-        embed1.add_field(
+        embed2.add_field(
             name="🎯 Strategy",
             value="Balance risk vs reward!\nBank early for safe profit\nor chase for massive wins!",
             inline=True
         )
-        embed1.add_field(
+        embed2.add_field(
             name="⚠️ Warning",
             value="Losing ANY round means you lose ALL winnings! Bank wisely.",
             inline=False
         )
-        embed1.set_footer(text="Page 3/10 • Use the buttons below to see other games")
-        pages.append(embed1)
+        embed2.set_footer(text="Page 3/10 • Use the buttons below to see other games")
+        pages.append(embed2)
         
         # Page 4: Slots
         embed2 = discord.Embed(
