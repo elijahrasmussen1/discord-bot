@@ -336,6 +336,11 @@ def get_user(user_id):
         row = c.fetchone()
     return row
 
+def get_balance(user_id):
+    """Get user's current balance."""
+    user_id_db, bal, req, gambled, total_gambled, total_withdrawn = get_user(user_id)
+    return bal
+
 def update_balance(user_id, amount):
     """Update user balance by adding amount. Validates inputs."""
     try:
@@ -7463,9 +7468,13 @@ async def buyspin(ctx):
     await ctx.send(embed=embed, view=view)
 
 @bot.command(name="activatewheel")
-@commands.has_any_role("Owner", "Co-owner")
 async def activatewheel(ctx):
     """Owner command: Activate the spin wheel and grant all members 1 free spin."""
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
     global spin_wheel_active
     
     if spin_wheel_active:
@@ -7506,7 +7515,6 @@ async def activatewheel(ctx):
     await ctx.send(embed=embed)
 
 @bot.command(name="addspin")
-@commands.has_any_role("Owner", "Co-owner")
 async def addspin(ctx, member: discord.Member, amount: int = 1):
     """Owner command: Gift spins to a specific user."""
     # Restrict to specific user IDs
@@ -7555,9 +7563,13 @@ async def addspin(ctx, member: discord.Member, amount: int = 1):
         pass  # DMs disabled
 
 @bot.command(name="setspecialprize")
-@commands.has_any_role("Owner", "Co-owner")
 async def setspecialprize(ctx, pet_id: int, *, pet_name: str):
     """Owner command: Set the special stock pet prize for the 0.5% win."""
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
     global current_special_prize
     
     current_special_prize = {
@@ -7574,9 +7586,13 @@ async def setspecialprize(ctx, pet_id: int, *, pet_name: str):
     await ctx.send(embed=embed)
 
 @bot.command(name="changewheelpet")
-@commands.has_any_role("Owner", "Co-owner")
 async def changewheelpet(ctx, pet_id: int, *, pet_name: str):
     """Owner command: Change the special stock pet prize for the 0.5% win."""
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
     global current_special_prize
     
     current_special_prize = {
