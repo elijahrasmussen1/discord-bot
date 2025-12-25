@@ -5546,7 +5546,7 @@ class GamesView(discord.ui.View):
             value=(
                 "• Beautiful animated spinning wheel\n"
                 "• Two separate prize pools (free vs paid)\n"
-                "• Buy multiple spins at once (save 0M on 3-pack!)\n"
+                "• Buy multiple spins at once\n"
                 "• Track statistics with `!wheelstats`\n"
                 "• Owner can gift spins with `!addspin`"
             ),
