@@ -7227,6 +7227,36 @@ class SpinWheelView(View):
                     inline=False
                 )
             
+            # Notify owners about the pet prize win
+            try:
+                winner = interaction.guild.get_member(self.user_id)
+                winner_mention = winner.mention if winner else f"User ID: {self.user_id}"
+                
+                owner_notification = discord.Embed(
+                    title="🚨 STOCK PET WON! 🐾",
+                    description=f"**{winner.display_name if winner else 'A user'}** just won the stock pet!\n\n"
+                                f"Winner: {winner_mention}\n"
+                                f"Prize: {current_special_prize['pet_name'] if current_special_prize else 'Stock Pet'}\n"
+                                f"Pet ID: #{current_special_prize['pet_id'] if current_special_prize else 'N/A'}",
+                    color=discord.Color.gold(),
+                    timestamp=datetime.now()
+                )
+                
+                # DM and ping both owners
+                for owner_id in OWNER_IDS:
+                    try:
+                        owner = await bot.fetch_user(owner_id)
+                        if owner:
+                            # Send DM
+                            await owner.send(embed=owner_notification)
+                            # Try to mention in channel if possible
+                            if interaction.channel:
+                                await interaction.channel.send(f"<@{owner_id}> Stock pet won by {winner_mention}!", embed=owner_notification)
+                    except Exception as e:
+                        print(f"Failed to notify owner {owner_id}: {e}")
+            except Exception as e:
+                print(f"Error notifying owners about stock pet win: {e}")
+            
             # Update stats
             c.execute("""
                 UPDATE spin_wheel_data 
@@ -7537,6 +7567,25 @@ async def setspecialprize(ctx, pet_id: int, *, pet_name: str):
     )
     await ctx.send(embed=embed)
 
+@bot.command(name="changewheelpet")
+@commands.has_any_role("Owner", "Co-owner")
+async def changewheelpet(ctx, pet_id: int, *, pet_name: str):
+    """Owner command: Change the special stock pet prize for the 0.5% win."""
+    global current_special_prize
+    
+    current_special_prize = {
+        "pet_id": pet_id,
+        "pet_name": pet_name
+    }
+    
+    embed = discord.Embed(
+        title="✅ Wheel Pet Prize Updated!",
+        description=f"The 0.5% stock pet prize has been changed to:\n\n"
+                    f"**{pet_name}** (ID: #{pet_id})",
+        color=discord.Color.purple()
+    )
+    await ctx.send(embed=embed)
+
 @bot.command(name="wheelstats")
 async def wheelstats(ctx, member: discord.Member = None):
     """View spin wheel statistics."""
@@ -7607,7 +7656,8 @@ async def spincom(ctx):
         value=(
             "`!activatewheel` - Activate wheel and grant all members 1 free spin\n"
             "`!addspin @user <amount>` - Gift spins to a user\n"
-            "`!setspecialprize <description>` - Set the stock pet prize description"
+            "`!setspecialprize <pet_id> <pet_name>` - Set the stock pet prize\n"
+            "`!changewheelpet <pet_id> <pet_name>` - Change the stock pet prize"
         ),
         inline=False
     )
