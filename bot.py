@@ -7490,7 +7490,7 @@ async def activatewheel(ctx):
         await ctx.send("❌ Could not find guild!")
         return
     
-    member_role = discord.utils.get(guild.roles, name="member")
+    member_role = guild.get_role(1442285739067834528)  # @member role ID
     if not member_role:
         await ctx.send("⚠️ Warning: Could not find @member role. Wheel activated but no spins granted.")
         return
@@ -7513,6 +7513,74 @@ async def activatewheel(ctx):
         color=discord.Color.green()
     )
     await ctx.send(embed=embed)
+
+@bot.command(name="deactivatewheel")
+async def deactivatewheel(ctx):
+    """Owner command: Deactivate the spin wheel and reset all stats."""
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
+    global spin_wheel_active
+    
+    if not spin_wheel_active:
+        await ctx.send("❌ The spin wheel is not currently activated!")
+        return
+    
+    # Confirm deactivation
+    confirm_embed = discord.Embed(
+        title="⚠️ CONFIRM DEACTIVATION",
+        description="This will:\n"
+                    "• Deactivate the spin wheel\n"
+                    "• **DELETE ALL** user spin data\n"
+                    "• **DELETE ALL** spin history\n"
+                    "• Reset the system to initial state\n\n"
+                    "This action **CANNOT BE UNDONE**!\n\n"
+                    "React with ✅ to confirm or ❌ to cancel.",
+        color=discord.Color.red()
+    )
+    confirm_msg = await ctx.send(embed=confirm_embed)
+    await confirm_msg.add_reaction("✅")
+    await confirm_msg.add_reaction("❌")
+    
+    def check(reaction, user):
+        return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == confirm_msg.id
+    
+    try:
+        reaction, user = await bot.wait_for('reaction_add', timeout=30.0, check=check)
+        
+        if str(reaction.emoji) == "❌":
+            await ctx.send("❌ Deactivation cancelled.")
+            return
+        
+        # Proceed with deactivation
+        conn = sqlite3.connect('gambling_bot.db')
+        c = conn.cursor()
+        
+        # Delete all spin wheel data
+        c.execute("DELETE FROM spin_wheel_data")
+        c.execute("DELETE FROM spin_wheel_history")
+        
+        conn.commit()
+        conn.close()
+        
+        # Deactivate the wheel
+        spin_wheel_active = False
+        
+        success_embed = discord.Embed(
+            title="🔴 SPIN WHEEL DEACTIVATED",
+            description="The spin wheel has been deactivated and all data has been reset.\n\n"
+                        f"✅ Deleted all user spin data\n"
+                        f"✅ Deleted all spin history\n"
+                        f"✅ System reset to initial state\n\n"
+                        f"Use `!activatewheel` to reactivate.",
+            color=discord.Color.red()
+        )
+        await ctx.send(embed=success_embed)
+        
+    except asyncio.TimeoutError:
+        await ctx.send("⏱️ Confirmation timed out. Deactivation cancelled.")
 
 @bot.command(name="addspin")
 async def addspin(ctx, member: discord.Member, amount: int = 1):
@@ -7677,6 +7745,7 @@ async def spincom(ctx):
         name="⚙️ Owner Commands",
         value=(
             "`!activatewheel` - Activate wheel and grant all members 1 free spin\n"
+            "`!deactivatewheel` - Deactivate wheel and reset all data\n"
             "`!addspin @user <amount>` - Gift spins to a user\n"
             "`!setspecialprize <pet_id> <pet_name>` - Set the stock pet prize\n"
             "`!changewheelpet <pet_id> <pet_name>` - Change the stock pet prize"
