@@ -159,7 +159,9 @@ CREATE TABLE IF NOT EXISTS spin_wheel_data (
     purchased_spins INTEGER DEFAULT 0,
     last_spin_time TEXT,
     total_spins_used INTEGER DEFAULT 0,
-    total_winnings INTEGER DEFAULT 0
+    total_winnings INTEGER DEFAULT 0,
+    daily_purchased INTEGER DEFAULT 0,
+    last_purchase_date TEXT
 )
 """)
 
@@ -7028,14 +7030,14 @@ def get_spin_data(user_id: int):
     data = c.fetchone()
     if not data:
         c.execute("""
-            INSERT INTO spin_wheel_data (user_id, free_spins, purchased_spins, last_spin_time, total_spins_used, total_winnings)
-            VALUES (?, 0, 0, NULL, 0, 0)
+            INSERT INTO spin_wheel_data (user_id, free_spins, purchased_spins, last_spin_time, total_spins_used, total_winnings, daily_purchased, last_purchase_date)
+            VALUES (?, 0, 0, NULL, 0, 0, 0, NULL)
         """, (user_id,))
         conn.commit()
-        return (user_id, 0, 0, None, 0, 0)
+        return (user_id, 0, 0, None, 0, 0, 0, None)
     return data
 
-def update_spin_data(user_id: int, free_spins: int = None, purchased_spins: int = None, last_spin_time: str = None):
+def update_spin_data(user_id: int, free_spins: int = None, purchased_spins: int = None, last_spin_time: str = None, daily_purchased: int = None, last_purchase_date: str = None):
     """Update user spin data."""
     updates = []
     params = []
@@ -7049,6 +7051,12 @@ def update_spin_data(user_id: int, free_spins: int = None, purchased_spins: int 
     if last_spin_time is not None:
         updates.append("last_spin_time = ?")
         params.append(last_spin_time)
+    if daily_purchased is not None:
+        updates.append("daily_purchased = ?")
+        params.append(daily_purchased)
+    if last_purchase_date is not None:
+        updates.append("last_purchase_date = ?")
+        params.append(last_purchase_date)
     
     if updates:
         params.append(user_id)
@@ -7086,7 +7094,7 @@ def spin_wheel(is_paid_spin=False):
         # 2% (4/200) → 55M
         # 1% (2/200) → 100M
         # 0.5% (1/200) → Stock Pet
-        # 0.5% (1/200) → 300M
+        # 7.5% (15/200) → 300M
         
         if roll < 110:  # 0-109: 55%
             return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
@@ -7098,7 +7106,7 @@ def spin_wheel(is_paid_spin=False):
             return {"type": "money", "value": 100_000_000, "display": "100M💰"}
         elif roll < 185:  # 184: 0.5%
             return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
-        else:  # 185-199: 0.5%+
+        else:  # 185-199: 7.5%
             return {"type": "money", "value": 300_000_000, "display": "300M💰💎"}
     else:
         # FREE SPINS - Standard Prize Pool
@@ -7107,7 +7115,7 @@ def spin_wheel(is_paid_spin=False):
         # 2% (4/200) → 25M
         # 1% (2/200) → 50M
         # 0.5% (1/200) → Stock Pet
-        # 0.5% (1/200) → 200M
+        # 7.5% (15/200) → 200M
         
         if roll < 110:  # 0-109: 55%
             return {"type": "money", "value": 3_000_000, "display": "3M💰"}
@@ -7119,7 +7127,7 @@ def spin_wheel(is_paid_spin=False):
             return {"type": "money", "value": 50_000_000, "display": "50M💰"}
         elif roll < 185:  # 184: 0.5%
             return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
-        else:  # 185-199: 0.5%+
+        else:  # 185-199: 7.5%
             return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
 
 class SpinWheelView(View):
@@ -7341,6 +7349,33 @@ class BuySpinView(View):
             await interaction.response.send_message("❌ This isn't your purchase menu!", ephemeral=True)
             return
         
+        # Check if user is an owner (bypass daily limit)
+        is_owner = interaction.user.id in [1182265710248996874, 1249352131870195744]
+        
+        if not is_owner:
+            # Check daily purchase limit for non-owners
+            data = get_spin_data(self.user_id)
+            daily_purchased = data[6] if len(data) > 6 else 0
+            last_purchase_date = data[7] if len(data) > 7 else None
+            
+            today = datetime.now().date().isoformat()
+            
+            # Reset daily count if it's a new day
+            if last_purchase_date != today:
+                daily_purchased = 0
+            
+            # Check if purchase would exceed daily limit
+            if daily_purchased + count > 10:
+                remaining = 10 - daily_purchased
+                await interaction.response.edit_message(
+                    content=f"❌ Daily purchase limit reached! You can only buy {remaining} more spin(s) today.\n"
+                            f"Daily limit: 10 spins per day (resets at midnight)\n"
+                            f"Already purchased today: {daily_purchased} spin(s)",
+                    embed=None,
+                    view=None
+                )
+                return
+        
         # Check balance
         balance = get_balance(self.user_id)
         if balance < cost:
@@ -7360,6 +7395,18 @@ class BuySpinView(View):
         data = get_spin_data(self.user_id)
         purchased_spins = data[2]
         update_spin_data(self.user_id, purchased_spins=purchased_spins + count)
+        
+        # Update daily purchase count for non-owners
+        if not is_owner:
+            daily_purchased = data[6] if len(data) > 6 else 0
+            last_purchase_date = data[7] if len(data) > 7 else None
+            today = datetime.now().date().isoformat()
+            
+            # Reset if new day
+            if last_purchase_date != today:
+                daily_purchased = 0
+            
+            update_spin_data(self.user_id, daily_purchased=daily_purchased + count, last_purchase_date=today)
         
         # Log transaction
         log_transaction(self.user_id, "spin_purchase", -cost, bal_before, bal_after,
@@ -7381,6 +7428,16 @@ class BuySpinView(View):
             value=f"Free: {data[1]} | Purchased: {purchased_spins + count}",
             inline=False
         )
+        
+        # Add daily purchase info for non-owners
+        if not is_owner:
+            data_updated = get_spin_data(self.user_id)
+            daily_purchased_new = data_updated[6] if len(data_updated) > 6 else 0
+            embed.add_field(
+                name="Daily Purchases",
+                value=f"{daily_purchased_new}/10 spins purchased today",
+                inline=False
+            )
         
         await interaction.response.edit_message(content=None, embed=embed, view=None)
 
