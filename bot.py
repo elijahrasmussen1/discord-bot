@@ -5477,52 +5477,127 @@ class GamesView(discord.ui.View):
         """Create all game information pages."""
         pages = []
         
-        # Page 1: Coinflip
+        # Page 1: Daily Spin Wheel (REPLACING WORD CHAIN)
         embed0 = discord.Embed(
-            title="🪙 Coinflip",
-            description="**Simple heads or tails - Classic coinflip betting!**",
+            title="🎰 Daily Spin Wheel",
+            description="**Spin the mega wheel daily for amazing prizes!**",
             color=discord.Color.gold()
         )
         embed0.add_field(
-            name="📋 Command",
-            value="`!cf <amount> <heads/tails>`",
+            name="📋 Commands",
+            value=(
+                "`!spinwheel` - Spin the wheel\n"
+                "`!buyspin` - Purchase spins (10M each, 3 for 30M)\n"
+                "`!spincom` - View all spin commands\n"
+                "`!wheelstats` - View your statistics"
+            ),
             inline=False
         )
         embed0.add_field(
             name="💡 Example",
-            value="`!cf 200m heads`",
+            value="`!spinwheel` then click **SPIN!**",
             inline=False
         )
         embed0.add_field(
+            name="🎮 How It Works",
+            value=(
+                "• Get **1 free spin daily** (resets 24h after use)\n"
+                "• **Purchase spins** with `!buyspin` (they stack!)\n"
+                "• Free spins used first, then purchased spins\n"
+                "• Click **SPIN!** button to spin the wheel\n"
+                "• Interactive animation shows prize selection"
+            ),
+            inline=False
+        )
+        embed0.add_field(
+            name="💰 FREE SPIN PRIZES",
+            value=(
+                "• **3M** (55%) - Most common\n"
+                "• **10M** (34%) - Common\n"
+                "• **25M** (2%) - Uncommon\n"
+                "• **50M** (1%) - Rare\n"
+                "• **Stock Pet** (0.5%) - Very rare!\n"
+                "• **200M** (0.5%) - Jackpot!"
+            ),
+            inline=True
+        )
+        embed0.add_field(
+            name="💎 PAID SPIN PRIZES (BETTER!)",
+            value=(
+                "• **6.5M** (55%) - Enhanced!\n"
+                "• **20M** (34%) - 2x free!\n"
+                "• **55M** (2%) - Over 2x!\n"
+                "• **100M** (1%) - 2x jackpot!\n"
+                "• **Stock Pet** (0.5%) - Very rare!\n"
+                "• **300M** (0.5%) - MEGA JACKPOT!"
+            ),
+            inline=True
+        )
+        embed0.add_field(
+            name="🎫 Spin Types",
+            value=(
+                "**Free Spins**: Daily refresh, non-stacking\n"
+                "**Purchased Spins**: Stack unlimited, **HIGHER REWARDS!**"
+            ),
+            inline=False
+        )
+        embed0.add_field(
+            name="✨ Features",
+            value=(
+                "• Beautiful animated spinning wheel\n"
+                "• Two separate prize pools (free vs paid)\n"
+                "• Buy multiple spins at once (save 0M on 3-pack!)\n"
+                "• Track statistics with `!wheelstats`\n"
+                "• Owner can gift spins with `!addspin`"
+            ),
+            inline=False
+        )
+        embed0.set_footer(text="Page 1/10 • Use the buttons below to see other games")
+        pages.append(embed0)
+        
+        # Page 2: Coinflip
+        embed1 = discord.Embed(
+            title="🪙 Coinflip",
+            description="**Simple heads or tails - Classic coinflip betting!**",
+            color=discord.Color.gold()
+        )
+        embed1.add_field(
+            name="📋 Command",
+            value="`!cf <amount> <heads/tails>`",
+            inline=False
+        )
+        embed1.add_field(
+            name="💡 Example",
+            value="`!cf 200m heads`",
+            inline=False
+        )
+        embed1.add_field(
             name="🎮 How to Play",
             value="1. Bet an amount and choose heads or tails\n2. Click **Start CF** to flip the coin\n3. Win if the coin lands on your choice!\n4. Click **Flip Again** to replay with same bet and choice",
             inline=False
         )
-        embed0.add_field(
+        embed1.add_field(
             name="💰 Payout",
             value="**Win**: 1.95x your bet (5% house edge)",
             inline=True
         )
-        embed0.add_field(
+        embed1.add_field(
             name="🎯 Win Chance",
             value="**50%** - Fair odds!",
             inline=True
         )
-        embed0.add_field(
+        embed1.add_field(
             name="✨ Features",
             value="• **Start CF** button to begin\n• **Flip Again** button to replay with same side\n• Simple, fast gameplay\n• Fair 50/50 odds",
             inline=False
         )
-        embed0.add_field(
+        embed1.add_field(
             name="⚠️ Note",
             value="Using the flip again button will use the same side of the coin you originally picked!",
             inline=False
         )
-        embed0.set_footer(text="Page 1/11 • Use the buttons below to see other games")
-        pages.append(embed0)
-        
-        # Page 2: Flip & Chase
-        embed1 = discord.Embed(
+        embed1.set_footer(text="Page 2/10 • Use the buttons below to see other games")
+        pages.append(embed1)
             title="🎲 Flip & Chase",
             description="**Progressive double-or-nothing game - Chase for bigger wins or bank anytime!**",
             color=discord.Color.gold()
@@ -5557,10 +5632,10 @@ class GamesView(discord.ui.View):
             value="Losing ANY round means you lose ALL winnings! Bank wisely.",
             inline=False
         )
-        embed1.set_footer(text="Page 2/11 • Use the buttons below to see other games")
+        embed1.set_footer(text="Page 3/10 • Use the buttons below to see other games")
         pages.append(embed1)
         
-        # Page 2: Slots
+        # Page 4: Slots
         embed2 = discord.Embed(
             title="🎰 Slots",
             description="**3x3 slot machine with multiple winning patterns**",
@@ -5599,10 +5674,10 @@ class GamesView(discord.ui.View):
             value="Click 🔄 **Spin Again** to replay with same bet!",
             inline=False
         )
-        embed2.set_footer(text="Page 3/11 • Use the buttons below to see other games")
+        embed2.set_footer(text="Page 4/10 • Use the buttons below to see other games")
         pages.append(embed2)
         
-        # Page 3: Lucky Number
+        # Page 5: Lucky Number
         embed3 = discord.Embed(
             title="🎲 Lucky Number",
             description="**Risk-based number guessing with massive multipliers**",
@@ -5644,10 +5719,10 @@ class GamesView(discord.ui.View):
             value="Higher ranges = bigger multipliers but lower win chance!",
             inline=False
         )
-        embed3.set_footer(text="Page 4/11 • Use the buttons below to see other games")
+        embed3.set_footer(text="Page 5/10 • Use the buttons below to see other games")
         pages.append(embed3)
         
-        # Page 4: Crash
+        # Page 6: Crash
         embed4 = discord.Embed(
             title="🚀 Crash",
             description="**Real-time multiplier game with cash-out mechanic**",
@@ -5699,10 +5774,10 @@ class GamesView(discord.ui.View):
             value="If you don't cash out before the crash, you lose your entire bet",
             inline=False
         )
-        embed4.set_footer(text="Page 5/11 • Use the buttons below to see other games")
+        embed4.set_footer(text="Page 6/10 • Use the buttons below to see other games")
         pages.append(embed4)
         
-        # Page 5: Blackjack
+        # Page 7: Blackjack
         embed5 = discord.Embed(
             title="🎴 Blackjack",
             description="**Classic casino card game - Beat the dealer without going over 21!**",
@@ -5760,10 +5835,10 @@ class GamesView(discord.ui.View):
             value="Professional embeds, interactive buttons, real-time gameplay!",
             inline=False
         )
-        embed5.set_footer(text="Page 6/11 • Use the buttons below to see other games")
+        embed5.set_footer(text="Page 7/10 • Use the buttons below to see other games")
         pages.append(embed5)
         
-        # Page 6: Gladiator Fights
+        # Page 8: Risky Lumberjack (was Page 7)
         embed6 = discord.Embed(
             title="⚔️ Gladiator Fights",
             description="**Epic PvP battles with 8 unique gladiators**",
@@ -5811,7 +5886,7 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed6.set_footer(text="Page 7/11 • Use the buttons below to see other games")
+        embed6.set_footer(text="Page 8/10 • Use the buttons below to see other games")
         pages.append(embed6)
         
         # Page 7: Risky Lumberjack
@@ -5862,49 +5937,10 @@ class GamesView(discord.ui.View):
             value="Winner gets both bets (2x your wager!)",
             inline=False
         )
-        embed7.set_footer(text="Page 8/11 • Use the buttons below to see other games")
+        embed7.set_footer(text="Page 8/10 • Use the buttons below to see other games")
         pages.append(embed7)
         
-        # Page 8: Word Chain
-        embed8 = discord.Embed(
-            title="🔤 Word Chain",
-            description="**Turn-based word game - Chain words by matching letters!**",
-            color=discord.Color.blue()
-        )
-        embed8.add_field(
-            name="📋 Commands",
-            value="`!wordchain @user <amount>` - Start game\n`!word <your_word>` - Play word",
-            inline=False
-        )
-        embed8.add_field(
-            name="💡 Example",
-            value="`!wordchain @John 25m`\n`!word elephant`",
-            inline=False
-        )
-        embed8.add_field(
-            name="🎮 How to Play",
-            value="1. Challenge an opponent with `!wordchain`\n2. Opponent must accept\n3. Take turns with `!word <word>`\n4. Each word must start with the last letter of the previous word\n5. **30 seconds per turn** - timeout = loss!\n6. No repeating words!",
-            inline=False
-        )
-        embed8.add_field(
-            name="📝 Example Chain",
-            value="Apple → Elephant → Tiger → Raccoon → Nest",
-            inline=False
-        )
-        embed8.add_field(
-            name="💰 Winner Takes All",
-            value="First player to repeat a word, timeout, or give invalid word loses. Winner gets 2x the bet!",
-            inline=False
-        )
-        embed8.add_field(
-            name="⚠️ Important",
-            value="• Only letters allowed in words\n• 30-second time limit per turn\n• Play must continue in the same channel\n• Case doesn't matter",
-            inline=False
-        )
-        embed8.set_footer(text="Page 9/11 • Use the buttons below to see other games")
-        pages.append(embed8)
-        
-        # Page 9: Limbo
+        # Page 9: Limbo (was Page 10, removed Word Chain)
         embed9 = discord.Embed(
             title="🎰 Limbo",
             description="**Will the number be above or below 50? Higher bets = higher multipliers!**",
@@ -5951,7 +5987,7 @@ class GamesView(discord.ui.View):
             value="50 is neither above nor below - rolling exactly 50 counts as a loss for both choices!",
             inline=False
         )
-        embed9.set_footer(text="Page 10/11 • Use the buttons below to see other games")
+        embed9.set_footer(text="Page 9/10 • Use the buttons below to see other games")
         pages.append(embed9)
         
         # Page 10: General Rules
@@ -5990,7 +6026,7 @@ class GamesView(discord.ui.View):
             value="Use `!assist` to see all available commands",
             inline=False
         )
-        embed10.set_footer(text="Page 11/11 • Use the buttons below to see other games")
+        embed10.set_footer(text="Page 10/10 • Use the buttons below to see other games")
         pages.append(embed10)
         
         return pages
@@ -7016,31 +7052,53 @@ def check_and_grant_daily_spin(user_id: int):
     
     return False
 
-def spin_wheel():
+def spin_wheel(is_paid_spin=False):
     """Execute a wheel spin and return the prize."""
     import secrets
     roll = secrets.randbelow(200)  # 0-199 for precise percentages
     
-    # Prize distribution (total 200 = 100%)
-    # 55% (110/200) → 3M
-    # 34% (68/200) → 10M
-    # 2% (4/200) → 25M
-    # 1% (2/200) → 50M
-    # 0.5% (1/200) → Stock Pet
-    # 0.5% (1/200) → 200M
-    
-    if roll < 110:  # 0-109: 55%
-        return {"type": "money", "value": 3_000_000, "display": "3M💰"}
-    elif roll < 178:  # 110-177: 34%
-        return {"type": "money", "value": 10_000_000, "display": "10M💰"}
-    elif roll < 182:  # 178-181: 2%
-        return {"type": "money", "value": 25_000_000, "display": "25M💰"}
-    elif roll < 184:  # 182-183: 1%
-        return {"type": "money", "value": 50_000_000, "display": "50M💰"}
-    elif roll < 185:  # 184: 0.5%
-        return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
-    else:  # 185-199: 0.5%+
-        return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
+    if is_paid_spin:
+        # PAID SPINS - Enhanced Prize Pool
+        # 55% (110/200) → 6.5M
+        # 34% (68/200) → 20M
+        # 2% (4/200) → 55M
+        # 1% (2/200) → 100M
+        # 0.5% (1/200) → Stock Pet
+        # 0.5% (1/200) → 300M
+        
+        if roll < 110:  # 0-109: 55%
+            return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
+        elif roll < 178:  # 110-177: 34%
+            return {"type": "money", "value": 20_000_000, "display": "20M💰"}
+        elif roll < 182:  # 178-181: 2%
+            return {"type": "money", "value": 55_000_000, "display": "55M💰"}
+        elif roll < 184:  # 182-183: 1%
+            return {"type": "money", "value": 100_000_000, "display": "100M💰"}
+        elif roll < 185:  # 184: 0.5%
+            return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
+        else:  # 185-199: 0.5%+
+            return {"type": "money", "value": 300_000_000, "display": "300M💰💎"}
+    else:
+        # FREE SPINS - Standard Prize Pool
+        # 55% (110/200) → 3M
+        # 34% (68/200) → 10M
+        # 2% (4/200) → 25M
+        # 1% (2/200) → 50M
+        # 0.5% (1/200) → Stock Pet
+        # 0.5% (1/200) → 200M
+        
+        if roll < 110:  # 0-109: 55%
+            return {"type": "money", "value": 3_000_000, "display": "3M💰"}
+        elif roll < 178:  # 110-177: 34%
+            return {"type": "money", "value": 10_000_000, "display": "10M💰"}
+        elif roll < 182:  # 178-181: 2%
+            return {"type": "money", "value": 25_000_000, "display": "25M💰"}
+        elif roll < 184:  # 182-183: 1%
+            return {"type": "money", "value": 50_000_000, "display": "50M💰"}
+        elif roll < 185:  # 184: 0.5%
+            return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
+        else:  # 185-199: 0.5%+
+            return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
 
 class SpinWheelView(View):
     def __init__(self, user_id: int):
@@ -7074,19 +7132,26 @@ class SpinWheelView(View):
         if free_spins > 0:
             update_spin_data(self.user_id, free_spins=free_spins - 1)
             spin_type = "free"
+            is_paid = False
         else:
             update_spin_data(self.user_id, purchased_spins=purchased_spins - 1)
             spin_type = "purchased"
+            is_paid = True
         
         # Update last spin time
         update_spin_data(self.user_id, last_spin_time=datetime.now().isoformat())
         
-        # Create spinning animation
-        prizes = ["3M💰", "10M💰", "25M💰", "50M💰", "🐾PET🐾", "200M💰💎"]
+        # Create spinning animation with appropriate prizes
+        if is_paid:
+            prizes = ["6.5M💰", "20M💰", "55M💰", "100M💰", "🐾PET🐾", "300M💰💎"]
+            title_text = "🎰 SPINNING THE WHEEL! 🎰 (PAID SPIN - BETTER PRIZES!)"
+        else:
+            prizes = ["3M💰", "10M💰", "25M💰", "50M💰", "🐾PET🐾", "200M💰💎"]
+            title_text = "🎰 SPINNING THE WHEEL! 🎰"
         
         # Animate the spin
         animation_embed = discord.Embed(
-            title="🎰 SPINNING THE WHEEL! 🎰",
+            title=title_text,
             description="",
             color=discord.Color.gold()
         )
@@ -7101,7 +7166,7 @@ class SpinWheelView(View):
             await asyncio.sleep(0.15)
         
         # Get actual prize
-        prize = spin_wheel()
+        prize = spin_wheel(is_paid_spin=is_paid)
         
         # Process the prize
         result_embed = discord.Embed(
@@ -7288,13 +7353,14 @@ async def spinwheel(ctx):
     embed = discord.Embed(
         title="🎰 ELI'S MEGA SPIN WHEEL 🎰",
         description="Press **SPIN!** to test your luck!\n\n"
-                    "**Prize Pool:**\n"
-                    "💰 3M (55%)\n"
-                    "💰 10M (34%)\n"
-                    "💰 25M (2%)\n"
-                    "💰 50M (1%)\n"
-                    "🐾 Stock Pet (0.5%)\n"
-                    "💎 200M (0.5%)",
+                    "**FREE SPIN PRIZES:**\n"
+                    "💰 3M (55%) | 💰 10M (34%)\n"
+                    "💰 25M (2%) | 💰 50M (1%)\n"
+                    "🐾 Stock Pet (0.5%) | 💎 200M (0.5%)\n\n"
+                    "**PAID SPIN PRIZES (BETTER!):**\n"
+                    "💰 6.5M (55%) | 💰 20M (34%)\n"
+                    "💰 55M (2%) | 💰 100M (1%)\n"
+                    "🐾 Stock Pet (0.5%) | 💎 300M (0.5%)",
         color=discord.Color.gold()
     )
     
@@ -7512,6 +7578,159 @@ async def wheelstats(ctx, member: discord.Member = None):
     
     embed.set_thumbnail(url=target.display_avatar.url)
     await ctx.send(embed=embed)
+
+@bot.command(name="spincom")
+async def spincom(ctx):
+    """View all available spin wheel commands."""
+    embed = discord.Embed(
+        title="🎰 Spin Wheel Commands",
+        description="Complete list of spin wheel commands and features",
+        color=discord.Color.gold()
+    )
+    
+    embed.add_field(
+        name="🎮 Player Commands",
+        value=(
+            "`!spinwheel` - Open the spin wheel and spin\n"
+            "`!buyspin` - Purchase additional spins (10M each, 3 for 30M)\n"
+            "`!wheelstats [@user]` - View spin statistics\n"
+            "`!spincom` - View this command list"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="⚙️ Owner Commands",
+        value=(
+            "`!activatewheel` - Activate wheel and grant all members 1 free spin\n"
+            "`!addspin @user <amount>` - Gift spins to a user\n"
+            "`!setspecialprize <description>` - Set the stock pet prize description"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="💰 Prize Information",
+        value=(
+            "**Free Spins**: 3M-200M range\n"
+            "**Paid Spins**: 6.5M-300M range (**BETTER REWARDS!**)\n"
+            "Both have 0.5% chance for Stock Pet"
+        ),
+        inline=False
+    )
+    
+    embed.add_field(
+        name="ℹ️ How It Works",
+        value=(
+            "• Get 1 free spin daily (resets 24h after use)\n"
+            "• Purchase spins stack indefinitely\n"
+            "• Free spins used first, then purchased spins\n"
+            "• Purchased spins give **HIGHER REWARDS**!"
+        ),
+        inline=False
+    )
+    
+    embed.set_footer(text="Use !games to see all gambling games")
+    await ctx.send(embed=embed)
+
+@bot.command(name="ownerdonation")
+@commands.check(is_owner)
+async def ownerdonation(ctx, recipient: discord.Member, value: str):
+    """
+    Owner command to donate to users with no limits or cooldowns.
+    
+    Usage: !ownerdonation @user <amount>
+    Example: !ownerdonation @John 500m
+    """
+    # Parse amount
+    try:
+        parsed_value = parse_money(value)
+    except ValueError as e:
+        await ctx.send(f"❌ Invalid amount: {str(e)}")
+        return
+    
+    # Check if trying to donate to self
+    if recipient.id == ctx.author.id:
+        await ctx.send("❌ You cannot donate to yourself!")
+        return
+    
+    # Check if recipient is a bot
+    if recipient.bot:
+        await ctx.send("❌ You cannot donate to bots!")
+        return
+    
+    # Get owner's balance
+    owner_balance = get_balance(ctx.author.id)
+    if owner_balance < parsed_value:
+        await ctx.send(f"❌ Insufficient balance! You have {format_money(owner_balance)} but tried to donate {format_money(parsed_value)}")
+        return
+    
+    # Execute transaction
+    owner_bal_before = owner_balance
+    recipient_bal_before = get_balance(recipient.id)
+    
+    # Deduct from owner
+    update_balance(ctx.author.id, -parsed_value)
+    owner_bal_after = get_balance(ctx.author.id)
+    
+    # Add to recipient
+    update_balance(recipient.id, parsed_value)
+    recipient_bal_after = get_balance(recipient.id)
+    
+    # Verify transaction integrity
+    expected_owner_bal = owner_bal_before - parsed_value
+    expected_recipient_bal = recipient_bal_before + parsed_value
+    
+    if owner_bal_after != expected_owner_bal or recipient_bal_after != expected_recipient_bal:
+        # Rollback transaction
+        update_balance(ctx.author.id, parsed_value)
+        update_balance(recipient.id, -parsed_value)
+        await ctx.send("❌ Transaction failed due to integrity check. No money was transferred.")
+        log_transaction(ctx.author.id, "owner_donation_failed", 0, owner_bal_before, owner_bal_before,
+                       f"Failed owner donation to {recipient.id}")
+        return
+    
+    # Log transactions
+    log_transaction(ctx.author.id, "owner_donation_sent", -parsed_value, owner_bal_before, owner_bal_after,
+                   f"Owner donated {format_money(parsed_value)} to {recipient.id}")
+    log_transaction(recipient.id, "owner_donation_received", parsed_value, recipient_bal_before, recipient_bal_after,
+                   f"Received owner donation of {format_money(parsed_value)} from {ctx.author.id}")
+    
+    # Send confirmation in channel
+    embed = discord.Embed(
+        title="👑 Owner Donation",
+        description=f"**{ctx.author.mention}** has donated {format_money(parsed_value)} to {recipient.mention}!",
+        color=discord.Color.gold()
+    )
+    embed.add_field(
+        name=f"{ctx.author.display_name}'s Balance",
+        value=f"{format_money(owner_bal_before)} ➔ {format_money(owner_bal_after)}",
+        inline=True
+    )
+    embed.add_field(
+        name=f"{recipient.display_name}'s Balance",
+        value=f"{format_money(recipient_bal_before)} ➔ {format_money(recipient_bal_after)}",
+        inline=True
+    )
+    await ctx.send(embed=embed)
+    
+    # Send DM to recipient
+    try:
+        dm_embed = discord.Embed(
+            title="💰 You Received an Owner Donation!",
+            description=f"**{ctx.author.display_name}** has donated **{format_money(parsed_value)}** to you!",
+            color=discord.Color.gold()
+        )
+        dm_embed.add_field(
+            name="Your New Balance",
+            value=format_money(recipient_bal_after),
+            inline=False
+        )
+        dm_embed.set_footer(text="This is an owner donation with no limits")
+        await recipient.send(embed=dm_embed)
+    except discord.Forbidden:
+        # User has DMs disabled
+        await ctx.send(f"⚠️ Could not DM {recipient.mention} (DMs disabled)")
 
 # -----------------------------
 # RUN BOT
