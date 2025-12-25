@@ -921,15 +921,15 @@ async def assist(ctx):
         "**!pick [number]** - Pick your lucky number\n"
         "**!crash [amount]** - Play crash game (cash out before it crashes!)\n"
         "**!blackjack [amount]** - Play Blackjack! Beat the dealer without going over 21\n"
-        "**!limbo [amount]** - Play Limbo! Above or below 50?"
+        "**!limbo [amount]** - Play Limbo! Above or below 50?\n"
+        "**!spinwheel** - Spin the daily wheel! (1 free daily spin)\n"
+        "**!spincom** - View all spin wheel commands"
     ), inline=False)
     embed.add_field(name="⚔️ PvP Games", value=(
         "**!fight @user [amount]** - Challenge a player to a gladiator duel!\n"
         "**!pickgladiator [name]** - Pick your gladiator for fights\n"
         "**!choptree @user [amount]** - Challenge a player to risky lumberjack!\n"
-        "**!chop** - Take your turn chopping the tree\n"
-        "**!wordchain @user [amount]** - Challenge a player to word chain!\n"
-        "**!word [your_word]** - Play your word in the chain"
+        "**!chop** - Take your turn chopping the tree"
     ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
@@ -7509,6 +7509,12 @@ async def activatewheel(ctx):
 @commands.has_any_role("Owner", "Co-owner")
 async def addspin(ctx, member: discord.Member, amount: int = 1):
     """Owner command: Gift spins to a specific user."""
+    # Restrict to specific user IDs
+    allowed_user_ids = [1182265710248996874, 1249352131870195744]
+    if ctx.author.id not in allowed_user_ids:
+        await ctx.send("❌ You don't have permission to use this command!")
+        return
+    
     if amount < 1:
         await ctx.send("❌ Amount must be at least 1!")
         return
