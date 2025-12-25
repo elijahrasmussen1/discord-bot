@@ -2280,17 +2280,31 @@ async def trackpet(ctx, pet_id=None):
 
 @bot.command(name="petids")
 async def petids(ctx):
-    """Owner command to list all pets in stock."""
+    """Owner command to list all pets in stock and current wheel prize."""
     if not is_owner(ctx.author):
         await ctx.send("❌ Only owners can use this.")
         return
     
     try:
+        # Show current wheel prize first if set
+        global current_special_prize
+        if current_special_prize:
+            wheel_embed = discord.Embed(
+                title="🎰 Current Wheel Prize",
+                description=f"**{current_special_prize['pet_name']}**\n"
+                           f"Account: {current_special_prize.get('account', 'N/A')}\n"
+                           f"Wheel Prize ID: #{current_special_prize['pet_id']}",
+                color=discord.Color.gold()
+            )
+            wheel_embed.set_footer(text="This prize is separate from stock items and cannot be purchased")
+            await ctx.send(embed=wheel_embed)
+        
         # Query stock_items table for all pets
         c.execute("SELECT id, pet_name, account_stored FROM stock_items ORDER BY id")
         pets = c.fetchall()
         if not pets:
-            await ctx.send("📦 No pets currently in stock.")
+            if not current_special_prize:
+                await ctx.send("📦 No pets currently in stock and no wheel prize set.")
             return
         
         embed = discord.Embed(
@@ -7219,8 +7233,9 @@ class SpinWheelView(View):
                 result_embed.add_field(
                     name="🎁 MEGA WIN! 🐾",
                     value=f"**You won: {current_special_prize['pet_name']}**\n\n"
-                          f"Contact an owner to claim your prize!\n"
-                          f"Pet ID: #{current_special_prize['pet_id']}",
+                          f"Account: {current_special_prize.get('account', 'N/A')}\n"
+                          f"Pet ID: #{current_special_prize['pet_id']}\n\n"
+                          f"🎫 **Please open a support ticket to claim your prize!**",
                     inline=False
                 )
             else:
@@ -7228,6 +7243,7 @@ class SpinWheelView(View):
                 result_embed.add_field(
                     name="🎁 MEGA WIN! 🐾",
                     value=f"**You won a SPECIAL PRIZE!**\n\n"
+                          f"🎫 **Please open a support ticket to claim your prize!**\n"
                           f"Contact an owner to claim your stock pet!",
                     inline=False
                 )
@@ -7631,50 +7647,177 @@ async def addspin(ctx, member: discord.Member, amount: int = 1):
         pass  # DMs disabled
 
 @bot.command(name="setspecialprize")
-async def setspecialprize(ctx, pet_id: int, *, pet_name: str):
-    """Owner command: Set the special stock pet prize for the 0.5% win."""
+async def setspecialprize(ctx, *, args: str):
+    """Owner command: Set the special stock pet prize for the 0.5% win.
+    
+    Usage: !setspecialprize <pet_name>, <account_name>
+    Example: !setspecialprize Naughty Naughty 10m/s, gamb1ebotbank1
+    """
     # Check if user is authorized (specific user IDs only)
     if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
+    # Parse the arguments (pet_name, account_name)
+    try:
+        parts = args.split(",", 1)
+        if len(parts) != 2:
+            await ctx.send("❌ Invalid format! Use: `!setspecialprize <pet_name>, <account_name>`\n"
+                          "Example: `!setspecialprize Naughty Naughty 10m/s, gamb1ebotbank1`")
+            return
+        
+        pet_name = parts[0].strip()
+        account_name = parts[1].strip()
+        
+        if not pet_name or not account_name:
+            await ctx.send("❌ Pet name and account name cannot be empty!")
+            return
+    except Exception as e:
+        await ctx.send(f"❌ Error parsing command: {str(e)}")
+        return
+    
     global current_special_prize
     
+    # Generate a special ID for wheel prizes (using negative numbers to differentiate from stock items)
+    import secrets
+    wheel_prize_id = -abs(secrets.randbelow(1000000) + 1)
+    
     current_special_prize = {
-        "pet_id": pet_id,
-        "pet_name": pet_name
+        "pet_id": wheel_prize_id,
+        "pet_name": pet_name,
+        "account": account_name,
+        "is_wheel_prize": True
     }
     
     embed = discord.Embed(
         title="✅ Special Prize Set!",
-        description=f"The 0.5% stock pet prize is now:\n\n"
-                    f"**{pet_name}** (ID: #{pet_id})",
+        description=f"The 0.5% wheel prize is now:\n\n"
+                    f"**{pet_name}**\n"
+                    f"Account: {account_name}\n"
+                    f"Wheel Prize ID: #{wheel_prize_id}",
         color=discord.Color.purple()
     )
+    embed.set_footer(text="This prize is separate from stock items and cannot be purchased")
     await ctx.send(embed=embed)
 
 @bot.command(name="changewheelpet")
-async def changewheelpet(ctx, pet_id: int, *, pet_name: str):
-    """Owner command: Change the special stock pet prize for the 0.5% win."""
+async def changewheelpet(ctx, *, args: str):
+    """Owner command: Change the special stock pet prize for the 0.5% win.
+    
+    Usage: !changewheelpet <pet_name>, <account_name>
+    Example: !changewheelpet Naughty Naughty 10m/s, gamb1ebotbank1
+    """
+    # Check if user is authorized (specific user IDs only)
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+        await ctx.send("❌ This command is only available to specific owners!")
+        return
+    
+    # Parse the arguments (pet_name, account_name)
+    try:
+        parts = args.split(",", 1)
+        if len(parts) != 2:
+            await ctx.send("❌ Invalid format! Use: `!changewheelpet <pet_name>, <account_name>`\n"
+                          "Example: `!changewheelpet Naughty Naughty 10m/s, gamb1ebotbank1`")
+            return
+        
+        pet_name = parts[0].strip()
+        account_name = parts[1].strip()
+        
+        if not pet_name or not account_name:
+            await ctx.send("❌ Pet name and account name cannot be empty!")
+            return
+    except Exception as e:
+        await ctx.send(f"❌ Error parsing command: {str(e)}")
+        return
+    
+    global current_special_prize
+    
+    # Generate a special ID for wheel prizes (using negative numbers to differentiate from stock items)
+    import secrets
+    wheel_prize_id = -abs(secrets.randbelow(1000000) + 1)
+    
+    current_special_prize = {
+        "pet_id": wheel_prize_id,
+        "pet_name": pet_name,
+        "account": account_name,
+        "is_wheel_prize": True
+    }
+    
+    embed = discord.Embed(
+        title="✅ Wheel Pet Prize Updated!",
+        description=f"The 0.5% wheel prize has been changed to:\n\n"
+                    f"**{pet_name}**\n"
+                    f"Account: {account_name}\n"
+                    f"Wheel Prize ID: #{wheel_prize_id}",
+        color=discord.Color.purple()
+    )
+    embed.set_footer(text="This prize is separate from stock items and cannot be purchased")
+    await ctx.send(embed=embed)
+
+@bot.command(name="autowinpet")
+async def autowinpet(ctx):
+    """Owner command: Auto-win the pet prize for testing purposes."""
     # Check if user is authorized (specific user IDs only)
     if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
     global current_special_prize
+    if not current_special_prize:
+        await ctx.send("❌ No wheel prize is currently set! Use `!setspecialprize` first.")
+        return
     
-    current_special_prize = {
-        "pet_id": pet_id,
-        "pet_name": pet_name
-    }
-    
-    embed = discord.Embed(
-        title="✅ Wheel Pet Prize Updated!",
-        description=f"The 0.5% stock pet prize has been changed to:\n\n"
-                    f"**{pet_name}** (ID: #{pet_id})",
-        color=discord.Color.purple()
+    # Create win notification embed
+    result_embed = discord.Embed(
+        title="🎰 TESTING: AUTO PET WIN 🎰",
+        description="**Simulating 0.5% pet win for testing...**",
+        color=discord.Color.gold()
     )
-    await ctx.send(embed=embed)
+    
+    result_embed.add_field(
+        name="🎁 MEGA WIN! 🐾",
+        value=f"**You won: {current_special_prize['pet_name']}**\n\n"
+              f"Account: {current_special_prize.get('account', 'N/A')}\n"
+              f"Pet ID: #{current_special_prize['pet_id']}\n\n"
+              f"🎫 **Please open a support ticket to claim your prize!**",
+        inline=False
+    )
+    
+    result_embed.set_footer(text="This is a test command - no actual prize awarded")
+    await ctx.send(embed=result_embed)
+    
+    # Notify owners about the test win
+    try:
+        winner = ctx.author
+        winner_mention = winner.mention
+        
+        owner_notification = discord.Embed(
+            title="🚨 TEST: STOCK PET WON! 🐾",
+            description=f"**{winner.display_name}** triggered test pet win!\n\n"
+                        f"Winner: {winner_mention}\n"
+                        f"Prize: {current_special_prize['pet_name']}\n"
+                        f"Pet ID: #{current_special_prize['pet_id']}\n"
+                        f"Account: {current_special_prize.get('account', 'N/A')}",
+            color=discord.Color.gold(),
+            timestamp=datetime.now()
+        )
+        owner_notification.set_footer(text="This was a test command - no actual prize awarded")
+        
+        # DM and ping both owners
+        OWNER_IDS = [1182265710248996874, 1249352131870195744]
+        for owner_id in OWNER_IDS:
+            try:
+                owner = await bot.fetch_user(owner_id)
+                if owner:
+                    # Send DM
+                    await owner.send(embed=owner_notification)
+                    # Try to mention in channel if possible
+                    if ctx.channel:
+                        await ctx.channel.send(f"<@{owner_id}> Test pet win triggered by {winner_mention}!", embed=owner_notification)
+            except Exception as e:
+                print(f"Failed to notify owner {owner_id}: {e}")
+    except Exception as e:
+        print(f"Error notifying owners about test pet win: {e}")
 
 @bot.command(name="wheelstats")
 async def wheelstats(ctx, member: discord.Member = None):
@@ -7747,8 +7890,9 @@ async def spincom(ctx):
             "`!activatewheel` - Activate wheel and grant all members 1 free spin\n"
             "`!deactivatewheel` - Deactivate wheel and reset all data\n"
             "`!addspin @user <amount>` - Gift spins to a user\n"
-            "`!setspecialprize <pet_id> <pet_name>` - Set the stock pet prize\n"
-            "`!changewheelpet <pet_id> <pet_name>` - Change the stock pet prize"
+            "`!setspecialprize <pet_name>, <account>` - Set the wheel pet prize\n"
+            "`!changewheelpet <pet_name>, <account>` - Change the wheel pet prize\n"
+            "`!autowinpet` - Test pet win (dev testing)"
         ),
         inline=False
     )
