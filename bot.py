@@ -7094,7 +7094,8 @@ def spin_wheel(is_paid_spin=False):
         # 2% (4/200) → 55M
         # 1% (2/200) → 100M
         # 0.5% (1/200) → Stock Pet
-        # 7.5% (15/200) → 300M
+        # 0.5% (1/200) → 300M
+        # 6.5% (13/200) → Recalculated base prizes
         
         if roll < 110:  # 0-109: 55%
             return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
@@ -7106,8 +7107,10 @@ def spin_wheel(is_paid_spin=False):
             return {"type": "money", "value": 100_000_000, "display": "100M💰"}
         elif roll < 185:  # 184: 0.5%
             return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
-        else:  # 185-199: 7.5%
+        elif roll < 186:  # 185: 0.5%
             return {"type": "money", "value": 300_000_000, "display": "300M💰💎"}
+        else:  # 186-199: 7% (filler - returns to base 6.5M)
+            return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
     else:
         # FREE SPINS - Standard Prize Pool
         # 55% (110/200) → 3M
@@ -7115,7 +7118,8 @@ def spin_wheel(is_paid_spin=False):
         # 2% (4/200) → 25M
         # 1% (2/200) → 50M
         # 0.5% (1/200) → Stock Pet
-        # 7.5% (15/200) → 200M
+        # 0.5% (1/200) → 200M
+        # 6.5% (13/200) → Recalculated base prizes
         
         if roll < 110:  # 0-109: 55%
             return {"type": "money", "value": 3_000_000, "display": "3M💰"}
@@ -7127,8 +7131,10 @@ def spin_wheel(is_paid_spin=False):
             return {"type": "money", "value": 50_000_000, "display": "50M💰"}
         elif roll < 185:  # 184: 0.5%
             return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
-        else:  # 185-199: 7.5%
+        elif roll < 186:  # 185: 0.5%
             return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
+        else:  # 186-199: 7% (filler - returns to base 3M)
+            return {"type": "money", "value": 3_000_000, "display": "3M💰"}
 
 class SpinWheelView(View):
     def __init__(self, user_id: int):
