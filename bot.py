@@ -20,7 +20,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # -----------------------------
 # CONFIG
 # -----------------------------
-OWNER_IDS = [1182265710248996874, 1249352131870195744]
+OWNER_IDS = [1182265710248996874, 1249352131870195744, 1250923685443797035]
 TICKET_CATEGORY_ID = 1442410056019742750
 TRANSCRIPT_CHANNEL_ID = 1442288590611681401
 WITHDRAWAL_LOG_CHANNEL = 1450656547402285167
@@ -7367,7 +7367,7 @@ class BuySpinView(View):
             return
         
         # Check if user is an owner (bypass daily limit)
-        is_owner = interaction.user.id in [1182265710248996874, 1249352131870195744]
+        is_owner = interaction.user.id in [1182265710248996874, 1249352131870195744, 1250923685443797035]
         
         if not is_owner:
             # Check daily purchase limit for non-owners
@@ -7561,7 +7561,7 @@ async def buyspin(ctx):
 async def activatewheel(ctx):
     """Owner command: Activate the spin wheel and grant all members 1 free spin."""
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -7608,7 +7608,7 @@ async def activatewheel(ctx):
 async def deactivatewheel(ctx):
     """Owner command: Deactivate the spin wheel and reset all stats."""
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -7676,7 +7676,7 @@ async def deactivatewheel(ctx):
 async def addspin(ctx, member: discord.Member, amount: int = 1):
     """Owner command: Gift spins to a specific user."""
     # Restrict to specific user IDs
-    allowed_user_ids = [1182265710248996874, 1249352131870195744]
+    allowed_user_ids = [1182265710248996874, 1249352131870195744, 1250923685443797035]
     if ctx.author.id not in allowed_user_ids:
         await ctx.send("❌ You don't have permission to use this command!")
         return
@@ -7728,7 +7728,7 @@ async def setspecialprize(ctx, *, args: str):
     Example: !setspecialprize Naughty Naughty 10m/s, gamb1ebotbank1
     """
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -7782,7 +7782,7 @@ async def changewheelpet(ctx, *, args: str):
     Example: !changewheelpet Naughty Naughty 10m/s, gamb1ebotbank1
     """
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -7832,7 +7832,7 @@ async def changewheelpet(ctx, *, args: str):
 async def autowinpet(ctx):
     """Owner command: Auto-win the pet prize for testing purposes."""
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -7878,7 +7878,7 @@ async def autowinpet(ctx):
         owner_notification.set_footer(text="This was a test command - no actual prize awarded")
         
         # DM and ping both owners
-        OWNER_IDS = [1182265710248996874, 1249352131870195744]
+        OWNER_IDS = [1182265710248996874, 1249352131870195744, 1250923685443797035]
         for owner_id in OWNER_IDS:
             try:
                 owner = await bot.fetch_user(owner_id)
@@ -7901,7 +7901,7 @@ async def ownermessage(ctx, channel: discord.TextChannel, *, message: str):
     Example: !ownermessage #announcements Welcome to the server!
     """
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
@@ -8027,7 +8027,7 @@ async def ownerdonation(ctx, recipient: discord.Member, value: str):
     Example: !ownerdonation @John 500m
     """
     # Check if user is authorized (specific user IDs only)
-    if ctx.author.id not in [1182265710248996874, 1249352131870195744]:
+    if ctx.author.id not in [1182265710248996874, 1249352131870195744, 1250923685443797035]:
         await ctx.send("❌ This command is only available to specific owners!")
         return
     
