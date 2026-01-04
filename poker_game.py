@@ -204,9 +204,14 @@ class PokerGame:
     
     def start_betting_round(self):
         """Start a new betting round."""
-        # Reset players for new betting round
-        for player in self.players:
-            player.reset_for_new_round()
+        # Reset players for new betting round (except pre-flop where blinds are already posted)
+        if self.phase != GamePhase.PRE_FLOP:
+            for player in self.players:
+                player.reset_for_new_round()
+        else:
+            # For pre-flop, only reset has_acted flag
+            for player in self.players:
+                player.has_acted = False
         
         # Determine first player to act
         num_players = len(self.players)
@@ -224,8 +229,10 @@ class PokerGame:
             else:
                 self.current_player_index = (self.dealer_position + 1) % num_players
         
-        # Skip to first active player who can act
-        self.advance_to_next_player()
+        # Skip to first active player who can act (if current player can't act)
+        current_player = self.players[self.current_player_index]
+        if not current_player.is_active or current_player.is_all_in:
+            self.advance_to_next_player()
         
         self.turn_start_time = time.time()
     
@@ -234,6 +241,10 @@ class PokerGame:
         num_players = len(self.players)
         start_index = self.current_player_index
         
+        # Move to next player
+        self.current_player_index = (self.current_player_index + 1) % num_players
+        
+        # Find next player who can act
         while True:
             player = self.players[self.current_player_index]
             
@@ -243,7 +254,7 @@ class PokerGame:
             
             self.current_player_index = (self.current_player_index + 1) % num_players
             
-            # If we've looped back, no one can act
+            # If we've looped back, no one else can act
             if self.current_player_index == start_index:
                 break
         
@@ -365,6 +376,7 @@ class PokerGame:
             # Deal the flop
             self.community_cards.extend(self.deck.deal(3))
             self.phase = GamePhase.FLOP
+            self.current_bet = 0  # Reset current bet for new round
             self.start_betting_round()
             
             self.log_action({
@@ -377,6 +389,7 @@ class PokerGame:
             # Deal the turn
             self.community_cards.append(self.deck.deal(1)[0])
             self.phase = GamePhase.TURN
+            self.current_bet = 0  # Reset current bet for new round
             self.start_betting_round()
             
             self.log_action({
@@ -389,6 +402,7 @@ class PokerGame:
             # Deal the river
             self.community_cards.append(self.deck.deal(1)[0])
             self.phase = GamePhase.RIVER
+            self.current_bet = 0  # Reset current bet for new round
             self.start_betting_round()
             
             self.log_action({
