@@ -3588,8 +3588,11 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
                 f"Amount: {value:,}$\nGame: Lucky Number\nRange: 1-{max_num}\nBalance: {balance:,}$"
             )
 
-        # Generate lucky number
-        lucky_num = random.randint(1, max_num)
+        # Generate lucky number using provably fair (no bet deduction yet, only at !pick)
+        result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+            ctx.author.id, "luckynumber", 0, max_num  # amount=0 since we deduct at !pick
+        )
+        lucky_num = result + 1  # Convert 0-based to 1-based (1 to max_num)
         multiplier = calculate_lucky_number_multiplier(max_num)
         
         # Store game state
@@ -3598,7 +3601,10 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
             "range": max_num,
             "lucky_num": lucky_num,
             "timestamp": datetime.now(),
-            "multiplier": multiplier
+            "multiplier": multiplier,
+            "client_seed": client_seed,
+            "nonce": nonce,
+            "seed_hash": seed_hash
         }
 
         # Create embed
@@ -3713,6 +3719,13 @@ async def pick(ctx, number: str = None):
         embed.add_field(name="🎯 Range", value=f"1-{max_range}", inline=True)
         embed.add_field(name="📈 Win Chance", value=f"{(1/max_range)*100:.2f}%", inline=True)
         
+        # Add provably fair information
+        embed.add_field(
+            name="🔐 Provably Fair",
+            value=f"Nonce: {game['nonce']} | Client: {game['client_seed'][:8]}...\nSeed Hash: {game['seed_hash'][:16]}...\nUse `!verify` to verify fairness",
+            inline=False
+        )
+        
         await ctx.send(embed=embed)
         
         # Remove game from active games
@@ -3755,6 +3768,12 @@ class CrashView(View):
                     for item in self.children:
                         item.disabled = True
                     
+                    # Get game data for provably fair info
+                    game_data = crash_games.get(self.user_id, {})
+                    client_seed = game_data.get("client_seed", "")
+                    nonce = game_data.get("nonce", 0)
+                    seed_hash = game_data.get("seed_hash", "")
+                    
                     # Update to crash embed
                     embed = discord.Embed(
                         title="💥 CRASH!",
@@ -3764,6 +3783,15 @@ class CrashView(View):
                     embed.add_field(name="💸 Final Multiplier", value=f"**{self.crash_point}x**", inline=True)
                     embed.add_field(name="💔 You Lost", value=f"{self.bet_amount:,}$", inline=True)
                     embed.add_field(name="🎲 Result", value="**CRASHED**", inline=True)
+                    
+                    # Add provably fair information
+                    if client_seed:
+                        embed.add_field(
+                            name="🔐 Provably Fair",
+                            value=f"Nonce: {nonce} | Client: {client_seed[:8]}...\nSeed Hash: {seed_hash[:16]}...\nUse `!verify` to verify fairness",
+                            inline=False
+                        )
+                    
                     embed.set_footer(text="Better luck next time! Try !crash <amount> to play again.")
                     
                     await message.edit(embed=embed, view=self)
@@ -3866,6 +3894,12 @@ class CrashView(View):
         winnings = int(self.bet_amount * self.current_multiplier)
         profit = winnings - self.bet_amount
         
+        # Get game data for provably fair info
+        game_data = crash_games.get(self.user_id, {})
+        client_seed = game_data.get("client_seed", "")
+        nonce = game_data.get("nonce", 0)
+        seed_hash = game_data.get("seed_hash", "")
+        
         # Update user balance (win)
         user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
         balance += profit
@@ -3892,6 +3926,15 @@ class CrashView(View):
         embed.add_field(name="Balance", value=f"{balance:,}$", inline=True)
         embed.add_field(name="Remaining Gamble", value=f"{remaining:,}$", inline=True)
         embed.add_field(name="Crash Point", value=f"Would have crashed at {self.crash_point}x", inline=True)
+        
+        # Add provably fair information
+        if client_seed:
+            embed.add_field(
+                name="🔐 Provably Fair",
+                value=f"Nonce: {nonce} | Client: {client_seed[:8]}...\nSeed Hash: {seed_hash[:16]}...\nUse `!verify` to verify fairness",
+                inline=False
+            )
+        
         embed.set_footer(text=f"Great timing! • Use !crash <amount> to play again")
         
         await interaction.response.edit_message(embed=embed, view=self)
@@ -3961,26 +4004,23 @@ async def crash(ctx, amount: str = None):
             await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
             return
         
-        # Generate random crash point with MUCH higher house edge
-        # Heavily weighted toward early crashes - much harder to win
-        import random
-        rand = random.random()
+        # Generate crash point using provably fair system
+        result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+            ctx.author.id, "crash", value, 10000
+        )
         
-        if rand < 0.55:
-            # 55% chance: crash between 1.15x and 1.5x (very early crash)
-            crash_point = round(random.uniform(1.15, 1.5), 2)
-        elif rand < 0.78:
-            # 23% chance: crash between 1.5x and 2.0x
-            crash_point = round(random.uniform(1.5, 2.0), 2)
-        elif rand < 0.90:
-            # 12% chance: crash between 2.0x and 3.0x
-            crash_point = round(random.uniform(2.0, 3.0), 2)
-        elif rand < 0.97:
-            # 7% chance: crash between 3.0x and 5.0x
-            crash_point = round(random.uniform(3.0, 5.0), 2)
-        else:
-            # 3% chance: crash between 5.0x and 10.0x (rare)
-            crash_point = round(random.uniform(5.0, 10.0), 2)
+        # Convert result (0-9999) to crash point distribution
+        # Heavily weighted toward early crashes - much harder to win
+        if result < 5500:  # 55% chance: crash between 1.15x and 1.5x
+            crash_point = round(1.15 + (result / 5500) * 0.35, 2)
+        elif result < 7800:  # 23% chance: crash between 1.5x and 2.0x
+            crash_point = round(1.5 + ((result - 5500) / 2300) * 0.5, 2)
+        elif result < 9000:  # 12% chance: crash between 2.0x and 3.0x
+            crash_point = round(2.0 + ((result - 7800) / 1200) * 1.0, 2)
+        elif result < 9700:  # 7% chance: crash between 3.0x and 5.0x
+            crash_point = round(3.0 + ((result - 9000) / 700) * 2.0, 2)
+        else:  # 3% chance: crash between 5.0x and 10.0x
+            crash_point = round(5.0 + ((result - 9700) / 300) * 5.0, 2)
         
         # Create initial embed
         embed = discord.Embed(
@@ -4004,7 +4044,10 @@ async def crash(ctx, amount: str = None):
             "bet": value,
             "crash_point": crash_point,
             "timestamp": datetime.now(),
-            "message": message
+            "message": message,
+            "client_seed": client_seed,
+            "nonce": nonce,
+            "seed_hash": seed_hash
         }
         
         # Start the crash animation
@@ -5789,8 +5832,11 @@ class LimboView(discord.ui.View):
             for item in self.children:
                 item.disabled = True
             
-            # Generate random number between 1-100
-            roll = random.randint(1, 100)
+            # Generate provably fair number between 1-100
+            result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+                self.user_id, "limbo", self.bet_amount, 100
+            )
+            roll = result + 1  # Convert 0-99 to 1-100
             
             # Determine if player wins
             if choice == "above":
@@ -5854,6 +5900,14 @@ class LimboView(discord.ui.View):
                     value=f"+{format_money(profit)}",
                     inline=True
                 )
+                
+                # Add provably fair information
+                embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Nonce: {nonce} | Client: {client_seed[:8]}...\nSeed Hash: {seed_hash[:16]}...\nUse `!verify` to verify fairness",
+                    inline=False
+                )
+                
                 embed.set_footer(text=f"Bet: {format_money(self.bet_amount)} • Multiplier: {base_multiplier}x")
                 
             else:
@@ -5888,6 +5942,14 @@ class LimboView(discord.ui.View):
                     value=format_money(self.bet_amount),
                     inline=False
                 )
+                
+                # Add provably fair information
+                embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Nonce: {nonce} | Client: {client_seed[:8]}...\nSeed Hash: {seed_hash[:16]}...\nUse `!verify` to verify fairness",
+                    inline=False
+                )
+                
                 embed.set_footer(text=f"Better luck next time! • Try again with !limbo <amount>")
             
             await interaction.edit_original_response(embed=embed, view=self)
@@ -7588,10 +7650,13 @@ def check_and_grant_daily_spin(user_id: int):
     
     return False
 
-def spin_wheel(is_paid_spin=False):
-    """Execute a wheel spin and return the prize."""
-    import secrets
-    roll = secrets.randbelow(200)  # 0-199 for precise percentages
+def spin_wheel(user_id, is_paid_spin=False):
+    """Execute a wheel spin and return the prize with provably fair info."""
+    # Use provably fair to generate result (0-199 for precise percentages)
+    result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+        user_id, "spinwheel", 0, 200  # amount=0 since spin cost was already paid/deducted
+    )
+    roll = result  # Already 0-199
     
     if is_paid_spin:
         # PAID SPINS - Enhanced Prize Pool
@@ -7604,19 +7669,19 @@ def spin_wheel(is_paid_spin=False):
         # 6.5% (13/200) → Recalculated base prizes
         
         if roll < 110:  # 0-109: 55%
-            return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
+            prize = {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
         elif roll < 178:  # 110-177: 34%
-            return {"type": "money", "value": 20_000_000, "display": "20M💰"}
+            prize = {"type": "money", "value": 20_000_000, "display": "20M💰"}
         elif roll < 182:  # 178-181: 2%
-            return {"type": "money", "value": 55_000_000, "display": "55M💰"}
+            prize = {"type": "money", "value": 55_000_000, "display": "55M💰"}
         elif roll < 184:  # 182-183: 1%
-            return {"type": "money", "value": 100_000_000, "display": "100M💰"}
+            prize = {"type": "money", "value": 100_000_000, "display": "100M💰"}
         elif roll < 185:  # 184: 0.5%
-            return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
+            prize = {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
         elif roll < 186:  # 185: 0.5%
-            return {"type": "money", "value": 300_000_000, "display": "300M💰💎"}
+            prize = {"type": "money", "value": 300_000_000, "display": "300M💰💎"}
         else:  # 186-199: 7% (filler - returns to base 6.5M)
-            return {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
+            prize = {"type": "money", "value": 6_500_000, "display": "6.5M💰"}
     else:
         # FREE SPINS - Standard Prize Pool
         # 55% (110/200) → 3M
@@ -7628,19 +7693,26 @@ def spin_wheel(is_paid_spin=False):
         # 6.5% (13/200) → Recalculated base prizes
         
         if roll < 110:  # 0-109: 55%
-            return {"type": "money", "value": 3_000_000, "display": "3M💰"}
+            prize = {"type": "money", "value": 3_000_000, "display": "3M💰"}
         elif roll < 178:  # 110-177: 34%
-            return {"type": "money", "value": 10_000_000, "display": "10M💰"}
+            prize = {"type": "money", "value": 10_000_000, "display": "10M💰"}
         elif roll < 182:  # 178-181: 2%
-            return {"type": "money", "value": 25_000_000, "display": "25M💰"}
+            prize = {"type": "money", "value": 25_000_000, "display": "25M💰"}
         elif roll < 184:  # 182-183: 1%
-            return {"type": "money", "value": 50_000_000, "display": "50M💰"}
+            prize = {"type": "money", "value": 50_000_000, "display": "50M💰"}
         elif roll < 185:  # 184: 0.5%
-            return {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
+            prize = {"type": "pet", "value": None, "display": "🐾 STOCK PET 🐾"}
         elif roll < 186:  # 185: 0.5%
-            return {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
+            prize = {"type": "money", "value": 200_000_000, "display": "200M💰💎"}
         else:  # 186-199: 7% (filler - returns to base 3M)
-            return {"type": "money", "value": 3_000_000, "display": "3M💰"}
+            prize = {"type": "money", "value": 3_000_000, "display": "3M💰"}
+    
+    # Add provably fair info to prize
+    prize["client_seed"] = client_seed
+    prize["nonce"] = nonce
+    prize["seed_hash"] = seed_hash
+    
+    return prize
 
 class SpinWheelView(View):
     def __init__(self, user_id: int):
@@ -7708,7 +7780,7 @@ class SpinWheelView(View):
             await asyncio.sleep(0.15)
         
         # Get actual prize
-        prize = spin_wheel(is_paid_spin=is_paid)
+        prize = spin_wheel(self.user_id, is_paid_spin=is_paid)
         
         # Process the prize
         result_embed = discord.Embed(
@@ -7730,6 +7802,13 @@ class SpinWheelView(View):
             result_embed.add_field(
                 name="💵 Balance Update",
                 value=f"{format_money(bal_before)} ➔ {format_money(bal_after)}",
+                inline=False
+            )
+            
+            # Add provably fair information
+            result_embed.add_field(
+                name="🔐 Provably Fair",
+                value=f"Nonce: {prize.get('nonce', 0)} | Client: {prize.get('client_seed', '')[:8]}...\nSeed Hash: {prize.get('seed_hash', '')[:16]}...\nUse `!verify` to verify fairness",
                 inline=False
             )
             
@@ -7758,6 +7837,13 @@ class SpinWheelView(View):
                           f"🎫 **Please open a support ticket to claim your prize!**",
                     inline=False
                 )
+                
+                # Add provably fair information
+                result_embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Nonce: {prize.get('nonce', 0)} | Client: {prize.get('client_seed', '')[:8]}...\nSeed Hash: {prize.get('seed_hash', '')[:16]}...\nUse `!verify` to verify fairness",
+                    inline=False
+                )
             else:
                 # Fallback if no special prize set
                 result_embed.add_field(
@@ -7765,6 +7851,13 @@ class SpinWheelView(View):
                     value=f"**You won a SPECIAL PRIZE!**\n\n"
                           f"🎫 **Please open a support ticket to claim your prize!**\n"
                           f"Contact an owner to claim your stock pet!",
+                    inline=False
+                )
+                
+                # Add provably fair information
+                result_embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Nonce: {prize.get('nonce', 0)} | Client: {prize.get('client_seed', '')[:8]}...\nSeed Hash: {prize.get('seed_hash', '')[:16]}...\nUse `!verify` to verify fairness",
                     inline=False
                 )
             
