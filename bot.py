@@ -996,6 +996,11 @@ async def assist(ctx):
         "**!pokerleave** - Leave the table\n"
         "**!pokerend** - End game (host only)"
     ), inline=False)
+    embed.add_field(name="🛠️ Utility Commands", value=(
+        "**!resetgames** - Cancel all your active games and get refunds\n"
+        "**!stats [@user]** - View gambling profile\n"
+        "**!favorite <game>** - Set your favorite game"
+    ), inline=False)
     embed.add_field(name="🔐 Provably Fair System", value=(
         "**!fairinfo** - Learn about our provably fair system\n"
         "**!myseeds** - View your client seed and nonce\n"
@@ -8961,10 +8966,183 @@ async def ownerdonation(ctx, recipient: discord.Member, value: str):
         await ctx.send(f"⚠️ Could not DM {recipient.mention} (DMs disabled)")
 
 # -----------------------------
+# 🔄 RESET GAMES COMMAND
+# -----------------------------
+@bot.command(name='resetgames')
+async def reset_games(ctx):
+    """
+    Cancel all active games for the user and refund when appropriate.
+    Prevents money glitches by only refunding games that haven't been resolved.
+    """
+    user_id = ctx.author.id
+    refunded = 0
+    games_cancelled = []
+    
+    # Track what was cancelled for the response
+    refund_details = []
+    
+    # 1. Check and cancel Coinflip game
+    if user_id in active_coinflip:
+        game_data = active_coinflip[user_id]
+        bet_amount = game_data.get("bet", 0)
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Coinflip: {format_money(bet_amount)}")
+        games_cancelled.append("Coinflip")
+        
+        # Remove from active games
+        del active_coinflip[user_id]
+    
+    # 2. Check and cancel Flip & Chase game
+    if user_id in active_flip_chase:
+        game_data = active_flip_chase[user_id]
+        bet_amount = game_data.get("bet", 0)
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Flip & Chase: {format_money(bet_amount)}")
+        games_cancelled.append("Flip & Chase")
+        
+        # Remove from active games
+        del active_flip_chase[user_id]
+    
+    # 3. Check and cancel Blackjack game
+    if user_id in active_blackjack:
+        game = active_blackjack[user_id]
+        bet_amount = game.bet
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Blackjack: {format_money(bet_amount)}")
+        games_cancelled.append("Blackjack")
+        
+        # Remove from active games
+        del active_blackjack[user_id]
+    
+    # 4. Check and cancel Lucky Number game
+    if user_id in lucky_number_games:
+        game_data = lucky_number_games[user_id]
+        bet_amount = game_data.get("bet", 0)
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Lucky Number: {format_money(bet_amount)}")
+        games_cancelled.append("Lucky Number")
+        
+        # Remove from active games
+        del lucky_number_games[user_id]
+    
+    # 5. Check and cancel Crash game
+    if user_id in crash_games:
+        game_data = crash_games[user_id]
+        bet_amount = game_data.get("bet", 0)
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Crash: {format_money(bet_amount)}")
+        games_cancelled.append("Crash")
+        
+        # Remove from active games
+        del crash_games[user_id]
+    
+    # 6. Check and cancel Limbo game
+    if user_id in limbo_games:
+        game_data = limbo_games[user_id]
+        bet_amount = game_data.get("bet", 0)
+        
+        # Refund the bet
+        update_balance(user_id, bet_amount)
+        refunded += bet_amount
+        refund_details.append(f"Limbo: {format_money(bet_amount)}")
+        games_cancelled.append("Limbo")
+        
+        # Remove from active games
+        del limbo_games[user_id]
+    
+    # 7. Check and cancel RPS game (button-based, tracked by view timeout)
+    # RPS games are handled by the view timeout, no persistent state to clean
+    # But we'll mention it in the response if needed
+    
+    # 8. Check poker games - need to access poker manager
+    # Poker manager is set up later, so we need to check if it exists globally
+    if 'poker_manager' in globals() and poker_manager:
+        # Check all active poker games
+        for channel_id, game in list(poker_manager.active_games.items()):
+            if user_id in [p.user_id for p in game.players]:
+                # Find the player
+                player = next((p for p in game.players if p.user_id == user_id), None)
+                if player and not player.has_folded:
+                    # Refund the player's current bet in the pot
+                    if player.chips_in_pot > 0:
+                        update_balance(user_id, player.chips_in_pot)
+                        refunded += player.chips_in_pot
+                        refund_details.append(f"Poker (Channel {channel_id}): {format_money(player.chips_in_pot)}")
+                    
+                    # Remove player from game
+                    game.players.remove(player)
+                    games_cancelled.append(f"Poker (Channel {channel_id})")
+                    
+                    # If game has too few players, end it
+                    if len(game.players) < 2:
+                        poker_manager.remove_game(channel_id)
+    
+    # Build response embed
+    if games_cancelled:
+        embed = discord.Embed(
+            title="🔄 Games Reset",
+            description=f"{ctx.author.mention}, your active games have been cancelled.",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="Games Cancelled",
+            value="\n".join([f"• {game}" for game in games_cancelled]),
+            inline=False
+        )
+        
+        if refunded > 0:
+            embed.add_field(
+                name="💰 Total Refunded",
+                value=format_money(refunded),
+                inline=False
+            )
+            
+            if refund_details:
+                embed.add_field(
+                    name="Refund Breakdown",
+                    value="\n".join([f"• {detail}" for detail in refund_details]),
+                    inline=False
+                )
+        
+        user_data = get_user(user_id)
+        embed.add_field(
+            name="New Balance",
+            value=format_money(user_data[2]),  # balance is index 2
+            inline=False
+        )
+        
+        embed.set_footer(text="Your games have been safely reset • No money glitches!")
+        await ctx.send(embed=embed)
+    else:
+        embed = discord.Embed(
+            title="ℹ️ No Active Games",
+            description=f"{ctx.author.mention}, you don't have any active games to cancel.",
+            color=discord.Color.light_grey()
+        )
+        embed.set_footer(text="Use this command when you have stuck or broken games")
+        await ctx.send(embed=embed)
+
+# -----------------------------
 # POKER GAME SETUP
 # -----------------------------
 from poker_commands import setup_poker_commands
-setup_poker_commands(bot, parse_money, get_user, update_balance, add_gambled)
+poker_manager = setup_poker_commands(bot, parse_money, get_user, update_balance, add_gambled)
 
 # -----------------------------
 # RUN BOT
