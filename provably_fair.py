@@ -293,6 +293,45 @@ class ProvablyFairSystem:
         
         return result
     
+    def generate_multiple_results(self, server_seed, client_seed, nonce, count, modulo):
+        """
+        Generate multiple provably fair results from a single nonce.
+        Uses different segments of the HMAC hash for each result.
+        
+        Args:
+            server_seed (str): The server seed (secret)
+            client_seed (str): The client seed (public)
+            nonce (int): The nonce (counter)
+            count (int): Number of results to generate
+            modulo (int): The modulo to apply
+            
+        Returns:
+            list: List of results
+        """
+        # Create the message
+        message = f"{client_seed}:{nonce}"
+        
+        # Generate HMAC-SHA256
+        hmac_hash = hmac.new(
+            server_seed.encode(),
+            message.encode(),
+            hashlib.sha256
+        ).hexdigest()
+        
+        results = []
+        # Use different 8-character segments for each result
+        for i in range(count):
+            # Calculate offset (wrap around if needed)
+            offset = (i * 8) % (len(hmac_hash) - 8)
+            hex_slice = hmac_hash[offset:offset+8]
+            
+            # Convert to integer and apply modulo
+            result_int = int(hex_slice, 16)
+            result = result_int % modulo
+            results.append(result)
+        
+        return results
+    
     def place_bet(self, user_id, game_type, bet_amount, modulo):
         """
         Place a bet and generate a provably fair result.
@@ -333,6 +372,50 @@ class ProvablyFairSystem:
         self.increment_nonce(user_id)
         
         return (result, client_seed, current_nonce, server_seed_hash)
+    
+    def place_bet_multiple(self, user_id, game_type, bet_amount, count, modulo):
+        """
+        Place a bet and generate multiple provably fair results.
+        Used for games like slots (9 symbols) or blackjack (card draws).
+        
+        Args:
+            user_id (int): Discord user ID
+            game_type (str): Type of game (e.g., "slots", "blackjack")
+            bet_amount (int): Amount being bet
+            count (int): Number of results to generate
+            modulo (int): The modulo for the game
+            
+        Returns:
+            tuple: (results_list, client_seed, nonce, server_seed_hash)
+        """
+        # Get active server seed
+        server_seed_data = self.get_active_server_seed()
+        if not server_seed_data:
+            raise Exception("No active server seed! System not initialized.")
+        
+        server_seed, server_seed_hash = server_seed_data
+        
+        # Get or create user seeds
+        client_seed, current_nonce = self.get_or_create_user_seeds(user_id)
+        
+        # Generate multiple results
+        results = self.generate_multiple_results(server_seed, client_seed, current_nonce, count, modulo)
+        
+        # Log the bet (store results as comma-separated string)
+        timestamp = datetime.utcnow().isoformat()
+        results_str = ','.join(map(str, results))
+        self.c.execute("""
+            INSERT INTO provably_fair_bets
+            (user_id, game_type, server_seed_hash, client_seed, nonce, result, bet_amount, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (user_id, game_type, server_seed_hash, client_seed, current_nonce, results_str, bet_amount, timestamp))
+        
+        self.conn.commit()
+        
+        # Increment nonce for next bet
+        self.increment_nonce(user_id)
+        
+        return (results, client_seed, current_nonce, server_seed_hash)
     
     def verify_bet(self, server_seed, client_seed, nonce, expected_result, modulo):
         """
