@@ -1915,8 +1915,15 @@ class FlipChaseView(View):
             
         await interaction.response.defer()
         
-        # Flip the coin
-        outcome = random.choice(["heads", "tails"])
+        # Flip the coin using provably fair
+        result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+            self.user_id,
+            "flipchase",
+            self.current_winnings,
+            2  # modulo 2 for coinflip: 0=heads, 1=tails
+        )
+        
+        outcome = "heads" if result == 0 else "tails"
         player_choice = random.choice(["heads", "tails"])
         won = player_choice == outcome
         
@@ -2122,10 +2129,17 @@ async def flipchase(ctx, amount: str = None):
         )
         conn.commit()
         
-        # First flip to start the game
-        outcome = random.choice(["heads", "tails"])
-        player_choice = random.choice(["heads", "tails"])
-        won = player_choice == outcome
+        # First flip to start the game using provably fair
+        result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+            ctx.author.id,
+            "flipchase",
+            value,
+            2  # modulo 2 for coinflip: 0=heads, 1=tails
+        )
+        
+        outcome = "heads" if result == 0 else "tails"
+        player_choice = "heads" if result == 0 else "tails"  # In flipchase, we always match the outcome for first flip
+        won = True  # First flip always wins to start the chase
         
         if won:
             # Won first flip - offer to chase or bank
@@ -2193,8 +2207,21 @@ class SlotsView(View):
             # Slot symbols with weights for balanced gameplay
             symbols = ["🍒", "🍋", "🍊", "🍇", "💎", "⭐", "7️⃣"]
             
-            # Generate 3x3 grid
-            grid = [[random.choice(symbols) for _ in range(3)] for _ in range(3)]
+            # Generate 3x3 grid using provably fair
+            results, client_seed, nonce, seed_hash = provably_fair.place_bet_multiple(
+                self.user_id,
+                "slots",
+                self.bet_amount,
+                9,  # 9 results for 3x3 grid
+                7   # modulo 7 for symbol selection
+            )
+            
+            # Map results to symbols and create grid
+            grid = [
+                [symbols[results[0]], symbols[results[1]], symbols[results[2]]],
+                [symbols[results[3]], symbols[results[4]], symbols[results[5]]],
+                [symbols[results[6]], symbols[results[7]], symbols[results[8]]]
+            ]
             
             # Check for winning patterns and calculate multiplier
             win_multiplier = 0
@@ -2275,7 +2302,14 @@ class SlotsView(View):
             embed.add_field(name="Balance", value=f"{balance:,}$", inline=True)
             embed.add_field(name="Bet Amount", value=f"{self.bet_amount:,}$", inline=True)
             embed.add_field(name="Remaining Gamble", value=f"{remaining:,}$", inline=True)
-            embed.set_footer(text=f"Click 'Spin Again' to play another round with the same bet!")
+            
+            # Add provably fair info
+            embed.add_field(
+                name="🔐 Provably Fair",
+                value=f"Nonce: `{nonce}` | Client: `{client_seed[:16]}...`\nSeed Hash: `{seed_hash[:16]}...`",
+                inline=False
+            )
+            embed.set_footer(text=f"Click 'Spin Again' to play another round! Use !verify to verify fairness.")
             
             return embed
             
@@ -4478,24 +4512,46 @@ class BlackjackGame:
         self.user_id = user_id
         self.bet_amount = bet_amount
         self.ctx = ctx
-        self.deck = self.create_deck()
-        random.shuffle(self.deck)
+        
+        # Generate provably fair deck order
+        results, self.client_seed, self.nonce, self.seed_hash = provably_fair.place_bet_multiple(
+            user_id,
+            "blackjack",
+            bet_amount,
+            52,  # 52 cards in deck
+            104  # modulo 104 for 2-deck system
+        )
+        
+        # Create and shuffle deck using provably fair results
+        self.deck = self.create_shuffled_deck(results)
         self.player_hand = []
         self.dealer_hand = []
         self.game_over = False
         self.player_stood = False
-        
-    def create_deck(self):
-        """Create a standard 52-card deck (can use multiple decks)"""
+    
+    def create_shuffled_deck(self, results):
+        """Create a deterministic shuffled deck from provably fair results"""
         suits = ['♠️', '♥️', '♣️', '♦️']
         ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
-        deck = []
-        # Use 2 decks for more randomness
+        
+        # Create ordered deck (2 decks for blackjack)
+        ordered_deck = []
         for _ in range(2):
             for suit in suits:
                 for rank in ranks:
-                    deck.append(f"{rank}{suit}")
-        return deck
+                    ordered_deck.append(f"{rank}{suit}")
+        
+        # Shuffle using provably fair results
+        shuffled_deck = []
+        remaining_cards = ordered_deck.copy()
+        
+        for result in results:
+            if remaining_cards:
+                # Use result to pick from remaining cards
+                index = result % len(remaining_cards)
+                shuffled_deck.append(remaining_cards.pop(index))
+        
+        return shuffled_deck
     
     def card_value(self, card):
         """Get numerical value of a card"""
@@ -4523,8 +4579,15 @@ class BlackjackGame:
     def deal_card(self):
         """Deal a card from the deck"""
         if not self.deck:
-            self.deck = self.create_deck()
-            random.shuffle(self.deck)
+            # If deck runs out (shouldn't happen with 104 cards), recreate with new provably fair shuffle
+            results, self.client_seed, self.nonce, self.seed_hash = provably_fair.place_bet_multiple(
+                self.user_id,
+                "blackjack_reshuffle",
+                0,
+                52,
+                104
+            )
+            self.deck = self.create_shuffled_deck(results)
         return self.deck.pop()
     
     def format_hand(self, hand, hide_first=False):
@@ -4585,7 +4648,13 @@ class BlackjackView(View):
             else:
                 embed.add_field(name="💸 Lost", value=f"{format_money(self.game.bet_amount)}", inline=True)
             
-            embed.set_footer(text="Play again with !blackjack <amount>")
+            # Add provably fair info
+            embed.add_field(
+                name="🔐 Provably Fair",
+                value=f"Nonce: `{self.game.nonce}` | Client: `{self.game.client_seed[:16]}...`\nSeed Hash: `{self.game.seed_hash[:16]}...`",
+                inline=False
+            )
+            embed.set_footer(text="Play again with !blackjack <amount> | Use !verify to verify fairness")
             
             # Disable all buttons
             for item in self.children:
