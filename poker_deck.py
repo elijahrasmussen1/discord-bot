@@ -50,6 +50,7 @@ class Deck:
         self.shuffle_seed: str = ""
         self.shuffle_hash: str = ""
         self.dealt_cards: List[Card] = []
+        self.original_shuffled_order: List[dict] = []  # Store original order after shuffle
         self.reset()
     
     def reset(self):
@@ -75,8 +76,9 @@ class Deck:
             j = secrets.randbelow(i + 1)
             self.cards[i], self.cards[j] = self.cards[j], self.cards[i]
         
-        # Create a hash of the shuffled deck order
+        # Create a hash of the shuffled deck order and store it
         deck_order = [{'rank': card.rank, 'suit': card.suit} for card in self.cards]
+        self.original_shuffled_order = deck_order  # Save original order
         deck_json = json.dumps(deck_order, sort_keys=True)
         combined = f"{self.shuffle_seed}:{deck_json}"
         self.shuffle_hash = hashlib.sha256(combined.encode()).hexdigest()
@@ -92,11 +94,10 @@ class Deck:
         Get the full shuffle verification data at the end of the game.
         This allows players to verify the shuffle was fair.
         """
-        deck_order = [{'rank': card.rank, 'suit': card.suit} for card in self.cards]
         return {
             'seed': self.shuffle_seed,
             'hash': self.shuffle_hash,
-            'deck_order': deck_order,
+            'deck_order': self.original_shuffled_order,
             'dealt_cards': [card.to_dict() for card in self.dealt_cards]
         }
     
