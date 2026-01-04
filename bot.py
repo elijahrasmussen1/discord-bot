@@ -212,6 +212,18 @@ except Exception as e:
     print(f"⚠️ Database migration error (non-fatal): {e}")
 
 # -----------------------------
+# PROVABLY FAIR SYSTEM
+# -----------------------------
+from provably_fair import ProvablyFairSystem
+
+# Initialize provably fair system
+provably_fair = ProvablyFairSystem(conn)
+print("🎲 Initializing provably fair system...")
+active_seed_hash = provably_fair.initialize_system()
+print(f"✅ Provably fair system initialized")
+print(f"   Active Server Seed Hash: {active_seed_hash[:32]}...")
+
+# -----------------------------
 # STOCK MARKET INITIALIZATION
 # -----------------------------
 def initialize_stock_market():
@@ -983,6 +995,13 @@ async def assist(ctx):
         "**!pokerleave** - Leave the table\n"
         "**!pokerend** - End game (host only)"
     ), inline=False)
+    embed.add_field(name="🔐 Provably Fair System", value=(
+        "**!fairinfo** - Learn about our provably fair system\n"
+        "**!myseeds** - View your client seed and nonce\n"
+        "**!setseed <hex>** - Set custom client seed\n"
+        "**!verify [bet#]** - Verify your recent bets\n"
+        "**!revealedseed** - View revealed server seeds"
+    ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
             "**!ownercom** - Display all owner commands (detailed list)\n"
@@ -998,7 +1017,8 @@ async def assist(ctx):
             "**!resetstock** - Delete all current stock items\n"
             "**!wipeamount @user** - Wipe a user's balance\n"
             "**!stick [message]** - Create a sticky message at the bottom of the channel\n"
-            "**!unstick** - Remove the sticky message from the current channel"
+            "**!unstick** - Remove the sticky message from the current channel\n"
+            "**!rotateseed** - Rotate provably fair server seed"
         ), inline=False)
     await ctx.send(embed=embed)
 
@@ -1090,6 +1110,275 @@ async def favorite(ctx, *, game_name: str = None):
         await ctx.send(f"✅ Your favorite game has been set to: **{game_name}**")
     except Exception as e:
         await ctx.send(f"❌ Error setting favorite game: {str(e)}")
+
+@bot.command(name="fairinfo")
+async def fairinfo(ctx):
+    """Display information about the provably fair system."""
+    try:
+        stats = provably_fair.get_system_stats()
+        
+        embed = discord.Embed(
+            title="🔐 Provably Fair System",
+            description="Our gambling system uses cryptographic proof to ensure fairness and transparency.",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="How It Works",
+            value=(
+                "• **Server Seed**: Secret value used to generate results\n"
+                "• **Client Seed**: Your personal seed (customizable)\n"
+                "• **Nonce**: Counter that increments with each bet\n"
+                "• **Result**: Generated using HMAC-SHA256"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Current Server Seed Hash",
+            value=f"`{stats['active_seed_hash'][:32]}...`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Your Seeds",
+            value="Use `!myseeds` to view your client seed and nonce",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Verification",
+            value=(
+                "`!verify` - Verify your recent bets\n"
+                "`!setseed <seed>` - Set custom client seed\n"
+                "`!revealedseed` - View revealed server seeds"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="System Stats",
+            value=f"Total Bets: {stats['total_bets']:,}\nTotal Users: {stats['total_users']:,}\nSeed Rotations: {stats['total_rotations']}",
+            inline=False
+        )
+        
+        embed.set_footer(text="All bets are verifiable and cannot be manipulated")
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
+
+@bot.command(name="myseeds")
+async def myseeds(ctx):
+    """View your current client seed and nonce."""
+    try:
+        client_seed, nonce = provably_fair.get_or_create_user_seeds(ctx.author.id)
+        seed_hash = provably_fair.get_active_server_seed_hash()
+        
+        embed = discord.Embed(
+            title="🔑 Your Provably Fair Seeds",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="Client Seed",
+            value=f"`{client_seed}`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Current Nonce",
+            value=f"`{nonce}`",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Server Seed Hash",
+            value=f"`{seed_hash[:32]}...`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Customize",
+            value="Use `!setseed <hex_string>` to set your own client seed",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
+
+@bot.command(name="setseed")
+async def setseed(ctx, new_seed: str = None):
+    """Set your custom client seed."""
+    try:
+        if new_seed is None:
+            await ctx.send("❌ Usage: `!setseed <hex_string>`\nExample: `!setseed deadbeefcafe1234567890abcdef`")
+            return
+        
+        # Validate and set seed
+        success = provably_fair.set_client_seed(ctx.author.id, new_seed)
+        
+        if success:
+            await ctx.send(f"✅ Your client seed has been updated to: `{new_seed}`\n"
+                          f"💡 Your nonce has been preserved. Use `!myseeds` to view your seeds.")
+        else:
+            await ctx.send("❌ Invalid seed! Must be a valid hexadecimal string.\n"
+                          "Example: `deadbeef1234567890abcdef`")
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
+
+@bot.command(name="verify")
+async def verify(ctx, bet_number: int = 1):
+    """Verify your recent bets."""
+    try:
+        history = provably_fair.get_user_bet_history(ctx.author.id, limit=10)
+        
+        if not history:
+            await ctx.send("❌ No betting history found!")
+            return
+        
+        if bet_number < 1 or bet_number > len(history):
+            await ctx.send(f"❌ Invalid bet number! You have {len(history)} recent bets. Use `!verify <1-{len(history)}>`")
+            return
+        
+        # Get the bet (1-indexed for user, 0-indexed in list)
+        bet = history[bet_number - 1]
+        bet_id, game_type, seed_hash, client_seed, nonce, result, bet_amount, timestamp = bet
+        
+        embed = discord.Embed(
+            title=f"🔍 Bet Verification #{bet_id}",
+            description=f"**Game**: {game_type.title()}\n**Timestamp**: {timestamp[:19].replace('T', ' ')} UTC",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="Bet Details",
+            value=f"Amount: {format_money(bet_amount)}\nResult: `{result}`\nNonce: `{nonce}`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Seeds Used",
+            value=f"Client Seed: `{client_seed[:24]}...`\nServer Hash: `{seed_hash[:24]}...`",
+            inline=False
+        )
+        
+        # Check if server seed has been revealed
+        revealed_seeds = provably_fair.get_revealed_seeds(limit=50)
+        revealed_seed = None
+        for seed, hash_val, revealed_at in revealed_seeds:
+            if hash_val == seed_hash:
+                revealed_seed = seed
+                break
+        
+        if revealed_seed:
+            # Verify the bet
+            modulo = 2 if game_type == "coinflip" else 100
+            is_valid = provably_fair.verify_bet(revealed_seed, client_seed, nonce, result, modulo)
+            
+            embed.add_field(
+                name="✅ Server Seed Revealed",
+                value=f"`{revealed_seed[:32]}...`",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Verification Result",
+                value=f"{'✅ **VERIFIED** - Result is correct!' if is_valid else '❌ **FAILED** - Result mismatch!'}",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="⏳ Server Seed Not Yet Revealed",
+                value="The server seed will be revealed after rotation. Check back later with `!revealedseed`",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Showing bet {bet_number} of {len(history)}")
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
+
+@bot.command(name="revealedseed")
+async def revealedseed(ctx):
+    """View revealed server seeds."""
+    try:
+        revealed = provably_fair.get_revealed_seeds(limit=5)
+        
+        if not revealed:
+            await ctx.send("❌ No server seeds have been revealed yet!")
+            return
+        
+        embed = discord.Embed(
+            title="🔓 Revealed Server Seeds",
+            description="These seeds were previously used and can now be used to verify past bets.",
+            color=discord.Color.gold()
+        )
+        
+        for i, (seed, seed_hash, revealed_at) in enumerate(revealed, 1):
+            timestamp = revealed_at[:19].replace('T', ' ') if revealed_at else "Unknown"
+            embed.add_field(
+                name=f"Seed #{i}",
+                value=f"**Seed**: `{seed[:32]}...`\n**Hash**: `{seed_hash[:32]}...`\n**Revealed**: {timestamp} UTC",
+                inline=False
+            )
+        
+        embed.set_footer(text="Use !verify to verify your bets with these seeds")
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
+
+@bot.command(name="rotateseed")
+@commands.check(is_owner)
+async def rotateseed(ctx):
+    """[OWNER] Rotate the server seed."""
+    try:
+        old_seed, new_hash = provably_fair.rotate_server_seed()
+        
+        embed = discord.Embed(
+            title="🔄 Server Seed Rotated",
+            description="The server seed has been rotated. The old seed is now revealed.",
+            color=discord.Color.green()
+        )
+        
+        embed.add_field(
+            name="Old Server Seed (Revealed)",
+            value=f"`{old_seed}`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="New Server Seed Hash",
+            value=f"`{new_hash[:32]}...`",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Impact",
+            value="All users can now verify their past bets using the revealed seed.",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+        
+        # Log the rotation
+        if AUDIT_LOG_CHANNEL:
+            log_channel = bot.get_channel(AUDIT_LOG_CHANNEL)
+            if log_channel:
+                log_embed = discord.Embed(
+                    title="🔄 Provably Fair Seed Rotation",
+                    description=f"Server seed rotated by {ctx.author.mention}",
+                    color=discord.Color.blue()
+                )
+                log_embed.add_field(name="Old Seed", value=f"`{old_seed[:32]}...`", inline=False)
+                log_embed.add_field(name="New Hash", value=f"`{new_hash[:32]}...`", inline=False)
+                log_embed.timestamp = datetime.utcnow()
+                await log_channel.send(embed=log_embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error: {str(e)}")
 
 @bot.command(name="donate")
 async def donate(ctx, user: discord.Member = None, amount: str = None):
@@ -1329,8 +1618,16 @@ class CoinflipStartView(View):
             return
         
         try:
-            # Perform the flip
-            outcome = random.choice(["heads", "tails"])
+            # Use provably fair system to determine outcome
+            result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+                self.user_id,
+                "coinflip",
+                self.amount,
+                2  # modulo 2 for coinflip: 0=heads, 1=tails
+            )
+            
+            # Convert result to outcome
+            outcome = "heads" if result == 0 else "tails"
             won = self.choice == outcome
             
             # Get user data
@@ -1368,6 +1665,14 @@ class CoinflipStartView(View):
                 embed.add_field(name="Bet Amount", value=f"{format_money(self.amount)}", inline=True)
                 embed.add_field(name="Remaining Required", value=f"{format_money(remaining)}", inline=True)
                 
+                # Add provably fair info
+                embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Client Seed: `{client_seed[:16]}...`\nNonce: `{nonce}`\nServer Hash: `{seed_hash[:16]}...`",
+                    inline=False
+                )
+                embed.set_footer(text="Use !verify to verify this bet • !fairinfo for details")
+                
                 # Add flip again button
                 view = CoinflipAgainView(self.user_id, self.amount, self.choice)
                 await interaction.response.edit_message(embed=embed, view=view)
@@ -1400,6 +1705,14 @@ class CoinflipStartView(View):
                 embed.add_field(name="New Balance", value=f"{format_money(balance)}", inline=True)
                 embed.add_field(name="Required Gamble", value=f"{format_money(required_gamble)}", inline=True)
                 embed.add_field(name="Remaining", value=f"{format_money(remaining)}", inline=True)
+                
+                # Add provably fair info
+                embed.add_field(
+                    name="🔐 Provably Fair",
+                    value=f"Client Seed: `{client_seed[:16]}...`\nNonce: `{nonce}`\nServer Hash: `{seed_hash[:16]}...`",
+                    inline=False
+                )
+                embed.set_footer(text="Use !verify to verify this bet • !fairinfo for details")
                 
                 # Add flip again button
                 view = CoinflipAgainView(self.user_id, self.amount, self.choice)
