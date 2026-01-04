@@ -203,6 +203,10 @@ try:
         c.execute("ALTER TABLE users ADD COLUMN total_withdrawn INTEGER DEFAULT 0")
         print("✅ Added total_withdrawn column to users table")
     
+    if 'favorite_game' not in columns:
+        c.execute("ALTER TABLE users ADD COLUMN favorite_game TEXT DEFAULT 'Not Set'")
+        print("✅ Added favorite_game column to users table")
+    
     conn.commit()
 except Exception as e:
     print(f"⚠️ Database migration error (non-fatal): {e}")
@@ -401,6 +405,22 @@ def withdraw_balance(user_id, amount):
         "UPDATE users SET balance=?, required_gamble=?, gambled=0, total_withdrawn=? WHERE user_id=?",
         (new_bal, new_req, new_total_withdrawn, user_id_db)
     )
+    conn.commit()
+
+def get_favorite_game(user_id):
+    """Get user's favorite game."""
+    c.execute("SELECT favorite_game FROM users WHERE user_id=?", (user_id,))
+    result = c.fetchone()
+    if result:
+        return result[0] if result[0] else "Not Set"
+    return "Not Set"
+
+def set_favorite_game(user_id, game_name):
+    """Set user's favorite game."""
+    # Ensure user exists
+    get_user(user_id)
+    # Update favorite game
+    c.execute("UPDATE users SET favorite_game=? WHERE user_id=?", (game_name, user_id))
     conn.commit()
 
 # -----------------------------
@@ -926,6 +946,8 @@ async def assist(ctx):
     embed = discord.Embed(title="📘 SAB Bot Assistance", color=discord.Color.blurple())
     embed.add_field(name="👤 General Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
+        "**!stats [@user]** - View gambling profile (yours or another user's)\n"
+        "**!favorite <game>** - Set your favorite game\n"
         "**!donate @user [amount]** - Donate balance to another player\n"
         "**!withdraw** - Request a full withdrawal (requires owner approval)\n"
         "**!leaderboards** (or **!lb**) - View the top 10 players leaderboard\n"
@@ -989,6 +1011,85 @@ async def amount(ctx):
         await ctx.send(f"💰 **Your Gambling Amount**\nBalance: `{bal:,}$`\nRequired Gamble: `{req:,}$`\nRemaining: `{remaining:,}$`")
     except Exception as e:
         await ctx.send(f"❌ Error fetching your balance: {str(e)}")
+
+@bot.command(name="stats")
+async def stats(ctx, member: discord.Member = None):
+    """Display gambling profile for a user."""
+    try:
+        # If no member specified, show stats for command author
+        target_user = member if member else ctx.author
+        
+        # Get user data
+        user_data = get_user(target_user.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = user_data[:6]
+        
+        # Get favorite game
+        favorite_game = get_favorite_game(target_user.id)
+        
+        # Create embed
+        embed = discord.Embed(
+            title="• Gambling Profile •",
+            color=discord.Color.blue()
+        )
+        
+        # Add fields
+        embed.add_field(
+            name="Username",
+            value=f"{target_user.mention} ({target_user.name})",
+            inline=False
+        )
+        embed.add_field(
+            name="User ID",
+            value=str(target_user.id),
+            inline=False
+        )
+        embed.add_field(
+            name="Balance",
+            value=format_money(balance),
+            inline=False
+        )
+        embed.add_field(
+            name="Gambled",
+            value=f"{format_money(total_gambled)} (all time)",
+            inline=False
+        )
+        embed.add_field(
+            name="Favorite Game",
+            value=favorite_game,
+            inline=False
+        )
+        
+        # Set thumbnail to user's avatar
+        embed.set_thumbnail(url=target_user.display_avatar.url)
+        
+        # Set footer with timestamp
+        from datetime import datetime
+        current_time = datetime.now().strftime("%I:%M %p")
+        embed.set_footer(text=f"Eli's MM Service• Today at {current_time}")
+        
+        await ctx.send(embed=embed)
+    except Exception as e:
+        await ctx.send(f"❌ Error fetching stats: {str(e)}")
+
+@bot.command(name="favorite")
+async def favorite(ctx, *, game_name: str = None):
+    """Set your favorite game."""
+    try:
+        if game_name is None:
+            await ctx.send("❌ Usage: `!favorite <game name>`\nExample: `!favorite Blackjack`")
+            return
+        
+        # Limit length to prevent abuse
+        if len(game_name) > 100:
+            await ctx.send("❌ Game name must be 100 characters or less!")
+            return
+        
+        # Set the favorite game
+        set_favorite_game(ctx.author.id, game_name)
+        
+        await ctx.send(f"✅ Your favorite game has been set to: **{game_name}**")
+    except Exception as e:
+        await ctx.send(f"❌ Error setting favorite game: {str(e)}")
 
 @bot.command(name="donate")
 async def donate(ctx, user: discord.Member = None, amount: str = None):
