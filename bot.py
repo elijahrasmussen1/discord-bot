@@ -968,6 +968,7 @@ async def assist(ctx):
     embed.add_field(name="🎮 Solo Gambling Games", value=(
         "**!cf [amount] [heads/tails]** - Simple coinflip! Bet on heads or tails\n"
         "**!flipchase [amount]** - Flip & Chase: Double or nothing progressive game\n"
+        "**!rps [amount]** - Rock Paper Scissors with interactive buttons!\n"
         "**!slots [amount]** - Play the slot machine (3x3 grid)\n"
         "**!luckynumber [amount] [50-5000]** - Start lucky number game\n"
         "**!pick [number]** - Pick your lucky number\n"
@@ -2370,6 +2371,256 @@ def get_symbol_multiplier(symbol):
         "🍒": 1.2,    # Cherry
     }
     return multipliers.get(symbol, 0)
+
+# Rock Paper Scissors View with buttons
+class RPSView(discord.ui.View):
+    def __init__(self, user_id, bet_amount, house_choice, client_seed, nonce, seed_hash):
+        super().__init__(timeout=60)
+        self.user_id = user_id
+        self.bet_amount = bet_amount
+        self.house_choice = house_choice
+        self.client_seed = client_seed
+        self.nonce = nonce
+        self.seed_hash = seed_hash
+        self.responded = False
+        
+    async def on_timeout(self):
+        # Disable all buttons on timeout
+        for item in self.children:
+            item.disabled = True
+        
+    @discord.ui.button(label="🪨 Rock", style=discord.ButtonStyle.primary, custom_id="rps_rock")
+    async def rock_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_choice(interaction, 0, "🪨 Rock")
+    
+    @discord.ui.button(label="📄 Paper", style=discord.ButtonStyle.primary, custom_id="rps_paper")
+    async def paper_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_choice(interaction, 1, "📄 Paper")
+    
+    @discord.ui.button(label="✂️ Scissors", style=discord.ButtonStyle.primary, custom_id="rps_scissors")
+    async def scissors_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.handle_choice(interaction, 2, "✂️ Scissors")
+    
+    async def handle_choice(self, interaction: discord.Interaction, player_choice, player_choice_text):
+        try:
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("❌ This is not your game!", ephemeral=True)
+                return
+            
+            if self.responded:
+                await interaction.response.send_message("❌ You already made your choice!", ephemeral=True)
+                return
+            
+            self.responded = True
+            
+            # Disable all buttons
+            for item in self.children:
+                item.disabled = True
+            
+            # Determine winner
+            choices_text = ["🪨 Rock", "📄 Paper", "✂️ Scissors"]
+            house_choice_text = choices_text[self.house_choice]
+            
+            # 0 = Rock, 1 = Paper, 2 = Scissors
+            # Rock beats Scissors, Paper beats Rock, Scissors beats Paper
+            if player_choice == self.house_choice:
+                result = "tie"
+                result_text = "🤝 It's a Tie!"
+                result_color = discord.Color.yellow()
+                payout = self.bet_amount  # Get bet back
+                net_profit = 0
+            elif (player_choice == 0 and self.house_choice == 2) or \
+                 (player_choice == 1 and self.house_choice == 0) or \
+                 (player_choice == 2 and self.house_choice == 1):
+                result = "win"
+                result_text = "🎉 You Win!"
+                result_color = discord.Color.green()
+                payout = self.bet_amount * 2
+                net_profit = self.bet_amount
+            else:
+                result = "loss"
+                result_text = "😢 You Lose!"
+                result_color = discord.Color.red()
+                payout = 0
+                net_profit = -self.bet_amount
+            
+            # Update balance
+            user = get_user(self.user_id)
+            new_balance = user[2] + net_profit
+            update_balance(self.user_id, new_balance)
+            
+            # Create result embed
+            result_embed = discord.Embed(
+                title="🎮 Rock Paper Scissors - Result",
+                description=result_text,
+                color=result_color
+            )
+            
+            result_embed.add_field(
+                name="Your Choice",
+                value=player_choice_text,
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="House Choice",
+                value=house_choice_text,
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="\u200b",
+                value="\u200b",
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="Bet Amount",
+                value=format_money(self.bet_amount),
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="Payout",
+                value=format_money(payout),
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="Net Profit",
+                value=format_money(net_profit),
+                inline=True
+            )
+            
+            result_embed.add_field(
+                name="New Balance",
+                value=format_money(new_balance),
+                inline=False
+            )
+            
+            # Add provably fair info
+            result_embed.add_field(
+                name="🔐 Provably Fair",
+                value=f"Nonce: `{self.nonce}` | Client: `{self.client_seed[:16]}...`\n"
+                      f"Seed Hash: `{self.seed_hash[:32]}...`\n"
+                      f"Use `!verify` to verify fairness",
+                inline=False
+            )
+            
+            result_embed.set_footer(text=f"Eli's MM Service• Today at {datetime.now().strftime('%I:%M %p')}")
+            
+            await interaction.response.edit_message(embed=result_embed, view=self)
+            
+        except Exception as e:
+            print(f"❌ Error in RPS button handler: {str(e)}")
+            await interaction.response.send_message(f"❌ Error processing your choice: {str(e)}", ephemeral=True)
+
+@bot.command(name="rps")
+async def rockpaperscissors(ctx, amount: str = None):
+    """Play Rock Paper Scissors against the house! Choose wisely."""
+    try:
+        if amount is None:
+            await ctx.send("❌ Usage: `!rps <amount>`\nExample: `!rps 10m`")
+            return
+        
+        # Parse bet amount
+        bet = parse_money(amount)
+        if bet is None:
+            await ctx.send("❌ Invalid amount! Use formats like: `10k`, `5m`, `1b`")
+            return
+        
+        min_bet = 100
+        if bet < min_bet:
+            await ctx.send(f"❌ Minimum bet is {format_money(min_bet)}!")
+            return
+        
+        # Check balance
+        user = get_user(ctx.author.id)
+        if user[2] < bet:
+            await ctx.send(f"❌ Insufficient balance! You have {format_money(user[2])}, but need {format_money(bet)}")
+            return
+        
+        # Deduct bet
+        new_balance = user[2] - bet
+        update_balance(ctx.author.id, new_balance)
+        
+        # Track gambled amount
+        add_gambled(ctx.author.id, bet)
+        
+        # Generate provably fair result
+        result, client_seed, nonce, seed_hash = provably_fair.place_bet(
+            ctx.author.id,
+            "rps",
+            bet,
+            modulo=3  # 0 = Rock, 1 = Paper, 2 = Scissors
+        )
+        
+        house_choice = result  # This is the house's choice (0, 1, or 2)
+        
+        # Create initial embed
+        embed = discord.Embed(
+            title="🎮 Rock Paper Scissors",
+            description=f"Place your bet: **{format_money(bet)}**\n\n"
+                       f"Choose your move below! (60 seconds)\n"
+                       f"House will reveal their choice after you pick",
+            color=discord.Color.blue()
+        )
+        
+        embed.add_field(
+            name="🪨 Rock vs 📄 Paper",
+            value="Paper wins",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="📄 Paper vs ✂️ Scissors",
+            value="Scissors wins",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="✂️ Scissors vs 🪨 Rock",
+            value="Rock wins",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Win",
+            value=f"2x payout ({format_money(bet * 2)})",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Tie",
+            value=f"Get bet back ({format_money(bet)})",
+            inline=True
+        )
+        
+        embed.add_field(
+            name="Lose",
+            value=f"Lose bet ({format_money(bet)})",
+            inline=True
+        )
+        
+        # Add provably fair info
+        embed.add_field(
+            name="🔐 Provably Fair",
+            value=f"Nonce: `{nonce}` | Client: `{client_seed[:16]}...`\n"
+                  f"Seed Hash: `{seed_hash[:32]}...`\n"
+                  f"Use `!verify` to verify fairness",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Eli's MM Service• Today at {datetime.now().strftime('%I:%M %p')}")
+        
+        # Create view with buttons
+        view = RPSView(ctx.author.id, bet, house_choice, client_seed, nonce, seed_hash)
+        
+        await ctx.send(embed=embed, view=view)
+        
+    except Exception as e:
+        print(f"❌ Error in RPS command: {str(e)}")
+        await ctx.send(f"❌ Error starting Rock Paper Scissors: {str(e)}")
 
 @bot.command(name="slots")
 async def slots(ctx, amount: str = None):
