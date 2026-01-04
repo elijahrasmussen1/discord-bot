@@ -60,17 +60,19 @@ class Deck:
             for rank in Card.RANKS:
                 self.cards.append(Card(rank, suit))
         self.dealt_cards = []
+        self.original_shuffled_order = []
+        self.shuffle_seed = ""
+        self.shuffle_hash = ""
     
     def shuffle_cryptographic(self) -> str:
         """
         Shuffle the deck using cryptographically secure randomness.
         Returns the hash of the shuffle for verification.
         """
-        # Generate a cryptographically secure random seed
+        # Generate a cryptographically secure random seed for verification
         self.shuffle_seed = secrets.token_hex(32)
         
-        # Create a deterministic shuffle based on the seed
-        # We'll use Fisher-Yates shuffle with CSPRNG
+        # Shuffle using Fisher-Yates with CSPRNG
         for i in range(len(self.cards) - 1, 0, -1):
             # Generate cryptographically secure random index
             j = secrets.randbelow(i + 1)

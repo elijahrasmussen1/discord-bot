@@ -224,10 +224,7 @@ class PokerGame:
                 self.current_player_index = (self.dealer_position + 3) % num_players
         else:
             # Post-flop: first to act is left of dealer
-            if num_players == 2:
-                self.current_player_index = (self.dealer_position + 1) % num_players
-            else:
-                self.current_player_index = (self.dealer_position + 1) % num_players
+            self.current_player_index = (self.dealer_position + 1) % num_players
         
         # Skip to first active player who can act (if current player can't act)
         current_player = self.players[self.current_player_index]
