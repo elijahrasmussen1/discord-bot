@@ -268,7 +268,19 @@ async def assist(ctx):
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Open a withdrawal ticket (if 30% gambled)\n"
         "**!coinflip [amount] [heads/tails]** - Gamble a coinflip"
-    ))
+    ), inline=False)
+    embed.add_field(name="🃏 Poker Commands", value=(
+        "**!pokerjoin <amount>** - Join/create a poker table\n"
+        "**!pokerstart** - Start the game (host only)\n"
+        "**!pokercheck** - Check (no bet)\n"
+        "**!pokerbet <amount>** - Place a bet\n"
+        "**!pokerraise <amount>** - Raise the bet\n"
+        "**!pokercall** - Call the current bet\n"
+        "**!pokerfold** - Fold your hand\n"
+        "**!pokertable** - View table state\n"
+        "**!pokerleave** - Leave the table\n"
+        "**!pokerend** - End game (host only)"
+    ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
             "**!ticketpanel** - Send deposit ticket panel\n"
@@ -277,7 +289,7 @@ async def assist(ctx):
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
             "**!wipeamount @user** - Wipe a user's balance"
-        ))
+        ), inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="amount")
@@ -406,6 +418,12 @@ async def wipeamount(ctx, user: discord.Member):
     c.execute("UPDATE users SET balance=0, required_gamble=0, gambled=0 WHERE user_id=?", (user.id,))
     conn.commit()
     await ctx.send(f"✅ {user.mention}'s balance wiped.")
+
+# -----------------------------
+# POKER GAME SETUP
+# -----------------------------
+from poker_commands import setup_poker_commands
+setup_poker_commands(bot, parse_money, get_user, update_balance, add_gambled)
 
 # -----------------------------
 # BOT READY
