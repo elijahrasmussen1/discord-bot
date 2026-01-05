@@ -267,7 +267,8 @@ async def assist(ctx):
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Open a withdrawal ticket (if 30% gambled)\n"
-        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip"
+        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
+        "**!rps [amount] [rock/paper/scissors]** - Play rock paper scissors"
     ))
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
@@ -353,6 +354,79 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
     embed.add_field(name="Required Gamble", value=f"{required_gamble:,}$")
     embed.add_field(name="Remaining", value=f"{remaining:,}$")
     embed.add_field(name="Outcome", value=f"The coin landed on **{outcome}**")
+
+    await ctx.send(embed=embed)
+
+# -----------------------------
+# ✅ ROCK PAPER SCISSORS COMMAND
+# -----------------------------
+@bot.command(name="rps")
+async def rock_paper_scissors(ctx, amount: str = None, choice: str = None):
+    if amount is None or choice is None:
+        await ctx.send("❌ Usage: `!rps <amount> <rock/paper/scissors>`")
+        return
+
+    choice = choice.lower()
+    if choice not in ("rock", "paper", "scissors"):
+        await ctx.send("❌ You must choose **rock**, **paper**, or **scissors**.")
+        return
+
+    value = parse_money(amount)
+    if value <= 0:
+        await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
+        return
+
+    user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+
+    if value > balance:
+        await ctx.send("❌ You cannot gamble more than your balance.")
+        return
+
+    # Bot makes a random choice
+    bot_choice = random.choice(["rock", "paper", "scissors"])
+    
+    # Determine the outcome
+    if choice == bot_choice:
+        # Tie - no change in balance
+        result = "tie"
+        result_msg = f"🤝 It's a tie! Both chose **{choice}**. Your balance remains the same."
+        balance_change = 0
+    elif (choice == "rock" and bot_choice == "scissors") or \
+         (choice == "paper" and bot_choice == "rock") or \
+         (choice == "scissors" and bot_choice == "paper"):
+        # Player wins
+        result = "win"
+        balance += value
+        balance_change = value
+        result_msg = f"🎉 You won! Your **{choice}** beats bot's **{bot_choice}**. Your balance increased by {value:,}$."
+    else:
+        # Player loses
+        result = "loss"
+        balance -= value
+        balance_change = -value
+        result_msg = f"💀 You lost! Bot's **{bot_choice}** beats your **{choice}**. Your balance decreased by {value:,}$."
+
+    # Update gambled and total_gambled (regardless of win/loss/tie)
+    gambled += value
+    total_gambled += value
+    required_gamble = int(balance * GAMBLE_PERCENT)
+
+    # Update the database with all changes
+    c.execute(
+        "UPDATE users SET balance=?, gambled=?, total_gambled=?, required_gamble=? WHERE user_id=?",
+        (balance, gambled, total_gambled, required_gamble, ctx.author.id)
+    )
+    conn.commit()
+
+    remaining = max(required_gamble - gambled, 0)
+
+    embed = discord.Embed(title="✊✋✌️ Rock Paper Scissors Result", description=result_msg, color=discord.Color.gold())
+    embed.add_field(name="Balance", value=f"{balance:,}$")
+    embed.add_field(name="Required Gamble", value=f"{required_gamble:,}$")
+    embed.add_field(name="Remaining", value=f"{remaining:,}$")
+    embed.add_field(name="Your Choice", value=f"**{choice}**", inline=True)
+    embed.add_field(name="Bot's Choice", value=f"**{bot_choice}**", inline=True)
+    embed.add_field(name="Result", value=f"**{result.upper()}**", inline=True)
 
     await ctx.send(embed=embed)
 
