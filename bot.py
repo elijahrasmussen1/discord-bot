@@ -9250,7 +9250,7 @@ async def reset_games(ctx):
         user_data = get_user(user_id)
         embed.add_field(
             name="New Balance",
-            value=format_money(user_data[2]),  # balance is index 2
+            value=format_money(user_data[1]),  # balance is index 1
             inline=False
         )
         
