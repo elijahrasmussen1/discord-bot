@@ -2452,7 +2452,7 @@ class RPSView(discord.ui.View):
             
             # Update balance
             user = get_user(self.user_id)
-            new_balance = user[2] + net_profit
+            new_balance = user[1] + net_profit
             update_balance(self.user_id, new_balance)
             
             # Create result embed
@@ -2542,12 +2542,12 @@ async def rockpaperscissors(ctx, amount: str = None):
         
         # Check balance
         user = get_user(ctx.author.id)
-        if user[2] < bet:
-            await ctx.send(f"❌ Insufficient balance! You have {format_money(user[2])}, but need {format_money(bet)}")
+        if user[1] < bet:
+            await ctx.send(f"❌ Insufficient balance! You have {format_money(user[1])}, but need {format_money(bet)}")
             return
         
         # Deduct bet
-        new_balance = user[2] - bet
+        new_balance = user[1] - bet
         update_balance(ctx.author.id, new_balance)
         
         # Track gambled amount
