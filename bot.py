@@ -9521,7 +9521,7 @@ class BaccaratView(discord.ui.View):
             profit = -self.current_bet
         
         # Get final balance
-        _, final_balance, _, _, _, _ = get_user(self.user_id)
+        _, final_balance, _, _, _, _, _ = get_user(self.user_id)
         
         # Create result embed
         embed = discord.Embed(
