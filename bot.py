@@ -1474,7 +1474,7 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         recipient_id, recipient_bal, recipient_req, recipient_gambled, _, _, _ = get_user(user.id)
         
         # Additional validation: Verify balances haven't changed during processing
-        donor_id_check, donor_bal_check, _, _, _, _ = get_user(ctx.author.id)
+        donor_id_check, donor_bal_check, _, _, _, _, _ = get_user(ctx.author.id)
         if donor_bal_check != donor_bal:
             await ctx.send("❌ Your balance changed during processing. Please try again.")
             return
@@ -1487,8 +1487,8 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
         update_balance(user.id, value)
         
         # Verify the transaction completed correctly
-        _, donor_new_bal, _, _, _, _ = get_user(ctx.author.id)
-        _, recipient_new_bal, _, _, _, _ = get_user(user.id)
+        _, donor_new_bal, _, _, _, _, _ = get_user(ctx.author.id)
+        _, recipient_new_bal, _, _, _, _, _ = get_user(user.id)
         
         # Verify transaction integrity for BOTH donor and recipient
         expected_donor_bal = donor_bal - value
@@ -1653,7 +1653,7 @@ class CoinflipStartView(View):
             won = self.choice == outcome
             
             # Get user data
-            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, _, _ = get_user(self.user_id)
             
             if won:
                 # Player won
@@ -1756,7 +1756,7 @@ class CoinflipStartView(View):
         
         try:
             # Get user data
-            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, _, _ = get_user(self.user_id)
             
             # Return the bet to the player
             balance += self.amount
@@ -1800,7 +1800,7 @@ class CoinflipAgainView(View):
         
         try:
             # Get user data
-            user_id, balance, required_gamble, gambled, total_gambled, _ = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, _, _ = get_user(self.user_id)
             
             # Check if user has enough balance
             if balance < self.amount:
@@ -2276,7 +2276,7 @@ class SlotsView(View):
                 win_patterns.append(f"Diagonal /: {grid[0][2]}{grid[1][1]}{grid[2][0]}")
             
             # Calculate winnings
-            user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn, _ = get_user(self.user_id)
             
             # Check if user has enough balance
             if self.bet_amount > balance:
@@ -4072,7 +4072,7 @@ class CrashView(View):
                     await message.edit(embed=embed, view=self)
                     
                     # Update user balance (loss)
-                    user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+                    user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn, _ = get_user(self.user_id)
                     balance -= self.bet_amount
                     gambled += self.bet_amount
                     total_gambled += self.bet_amount
@@ -4176,7 +4176,7 @@ class CrashView(View):
         seed_hash = game_data.get("seed_hash", "")
         
         # Update user balance (win)
-        user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        user_id_db, balance, required_gamble, gambled, total_gambled, total_withdrawn, _ = get_user(self.user_id)
         balance += profit
         gambled += self.bet_amount
         total_gambled += self.bet_amount
