@@ -2457,7 +2457,7 @@ class RPSView(discord.ui.View):
                 result_text = "🎉 You Win!"
                 result_color = discord.Color.green()
                 payout = self.bet_amount * 2
-                net_profit = self.bet_amount
+                net_profit = self.bet_amount * 2
             else:
                 result = "loss"
                 result_text = "😢 You Lose!"
