@@ -2463,12 +2463,16 @@ class RPSView(discord.ui.View):
                 result_text = "😢 You Lose!"
                 result_color = discord.Color.red()
                 payout = 0
-                net_profit = -self.bet_amount
+                net_profit = 0  # Bet already deducted, so no additional loss
             
-            # Update balance
+            # Get current balance (after bet was already deducted)
             user = get_user(self.user_id)
-            new_balance = user[1] + net_profit
-            set_balance(self.user_id, new_balance)
+            current_balance = user[1]
+            new_balance = current_balance + net_profit
+            
+            # Update balance only if there's profit (win or tie)
+            if net_profit != 0:
+                update_balance(self.user_id, net_profit)
             
             # Create result embed
             result_embed = discord.Embed(
@@ -2700,7 +2704,7 @@ async def deposit(ctx, user: discord.Member = None, amount: str = None):
             return
         
         # Get balance before deposit
-        user_id, bal_before, req, gambled, _, _ = get_user(user.id)
+        user_id, bal_before, req, gambled, _, _, _ = get_user(user.id)
         
         # Update balance
         update_balance(user.id, value)
