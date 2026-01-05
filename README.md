@@ -390,20 +390,17 @@ async def rock_paper_scissors(ctx, amount: str = None, choice: str = None):
         # Tie - no change in balance
         result = "tie"
         result_msg = f"🤝 It's a tie! Both chose **{choice}**. Your balance remains the same."
-        balance_change = 0
     elif (choice == "rock" and bot_choice == "scissors") or \
          (choice == "paper" and bot_choice == "rock") or \
          (choice == "scissors" and bot_choice == "paper"):
         # Player wins
         result = "win"
         balance += value
-        balance_change = value
         result_msg = f"🎉 You won! Your **{choice}** beats bot's **{bot_choice}**. Your balance increased by {value:,}$."
     else:
         # Player loses
         result = "loss"
         balance -= value
-        balance_change = -value
         result_msg = f"💀 You lost! Bot's **{bot_choice}** beats your **{choice}**. Your balance decreased by {value:,}$."
 
     # Update gambled and total_gambled (regardless of win/loss/tie)
