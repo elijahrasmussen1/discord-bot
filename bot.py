@@ -2160,8 +2160,8 @@ async def flipchase(ctx, amount: str = None):
         )
         
         outcome = "heads" if result == 0 else "tails"
-        player_choice = "heads" if result == 0 else "tails"  # In flipchase, we always match the outcome for first flip
-        won = True  # First flip always wins to start the chase
+        player_choice = random.choice(["heads", "tails"])
+        won = player_choice == outcome
         
         if won:
             # Won first flip - offer to chase or bank
