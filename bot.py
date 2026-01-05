@@ -367,7 +367,7 @@ def get_user(user_id):
 
 def get_balance(user_id):
     """Get user's current balance."""
-    user_id_db, bal, req, gambled, total_gambled, total_withdrawn = get_user(user_id)
+    user_id_db, bal, req, gambled, total_gambled, total_withdrawn, favorite_game = get_user(user_id)
     return bal
 
 def update_balance(user_id, amount):
@@ -377,7 +377,7 @@ def update_balance(user_id, amount):
     except (ValueError, TypeError):
         raise ValueError(f"Invalid amount: {amount}")
     
-    user_id_db, bal, req, gambled, total_gambled, total_withdrawn = get_user(user_id)
+    user_id_db, bal, req, gambled, total_gambled, total_withdrawn, _ = get_user(user_id)
     new_bal = bal + amount
     new_req = int(new_bal * GAMBLE_PERCENT)
     c.execute(
@@ -393,7 +393,7 @@ def add_gambled(user_id, amount):
     except (ValueError, TypeError):
         raise ValueError(f"Invalid amount: {amount}")
     
-    user_id_db, bal, req, gambled, total_gambled, total_withdrawn = get_user(user_id)
+    user_id_db, bal, req, gambled, total_gambled, total_withdrawn, _ = get_user(user_id)
     new_gambled = gambled + amount
     new_total_gambled = total_gambled + amount
     c.execute(
@@ -409,7 +409,7 @@ def withdraw_balance(user_id, amount):
     except (ValueError, TypeError):
         raise ValueError(f"Invalid amount: {amount}")
     
-    user_id_db, bal, req, gambled, total_gambled, total_withdrawn = get_user(user_id)
+    user_id_db, bal, req, gambled, total_gambled, total_withdrawn, _ = get_user(user_id)
     new_bal = bal - amount
     new_req = int(new_bal * GAMBLE_PERCENT)
     new_total_withdrawn = total_withdrawn + amount
@@ -620,7 +620,7 @@ class WithdrawalConfirmView(View):
         
         try:
             # Get balance before withdrawal for logging
-            user_id, bal_before, req, gambled, total_gambled, total_withdrawn = get_user(self.user.id)
+            user_id, bal_before, req, gambled, total_gambled, total_withdrawn, _ = get_user(self.user.id)
             
             # Check for suspicious activity
             if self.amount >= SUSPICIOUS_WITHDRAWAL_THRESHOLD:
@@ -854,7 +854,7 @@ class WithdrawalPanelView(View):
     @discord.ui.button(label="Open Withdrawal Ticket", style=discord.ButtonStyle.green, custom_id="open_withdraw_ticket")
     async def open_withdraw_ticket(self, interaction: discord.Interaction, button: Button):
         try:
-            user_id, bal, req, gambled, _, _ = get_user(interaction.user.id)
+            user_id, bal, req, gambled, _, _, _ = get_user(interaction.user.id)
             remaining_gamble = max(req - gambled, 0)
 
             if bal <= 0:
@@ -1033,7 +1033,7 @@ async def assist(ctx):
 async def amount(ctx):
     """Display user's balance and gamble requirements."""
     try:
-        user_id, bal, req, gambled, _, _ = get_user(ctx.author.id)
+        user_id, bal, req, gambled, _, _, _ = get_user(ctx.author.id)
         remaining = max(req - gambled, 0)
         await ctx.send(f"💰 **Your Gambling Amount**\nBalance: `{bal:,}$`\nRequired Gamble: `{req:,}$`\nRemaining: `{remaining:,}$`")
     except Exception as e:
@@ -1448,7 +1448,7 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
             return
         
         # Get donor's balance
-        donor_id, donor_bal, donor_req, donor_gambled, _, _ = get_user(ctx.author.id)
+        donor_id, donor_bal, donor_req, donor_gambled, _, _, _ = get_user(ctx.author.id)
         
         # Check if donor has enough balance
         if donor_bal < value:
@@ -1456,7 +1456,7 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
             return
         
         # Get recipient's info (ensure they exist in database)
-        recipient_id, recipient_bal, recipient_req, recipient_gambled, _, _ = get_user(user.id)
+        recipient_id, recipient_bal, recipient_req, recipient_gambled, _, _, _ = get_user(user.id)
         
         # Additional validation: Verify balances haven't changed during processing
         donor_id_check, donor_bal_check, _, _, _, _ = get_user(ctx.author.id)
@@ -1566,7 +1566,7 @@ async def donate(ctx, user: discord.Member = None, amount: str = None):
 async def withdraw(ctx):
     """Request a full withdrawal. Owners must approve the request."""
     try:
-        user_id, bal, req, gambled, _, _ = get_user(ctx.author.id)
+        user_id, bal, req, gambled, _, _, _ = get_user(ctx.author.id)
         remaining_gamble = max(req - gambled, 0)
         
         # Check if user has a balance
@@ -1841,7 +1841,7 @@ async def coinflip(ctx, amount: str = None, choice: str = None):
             await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
             return
         
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
@@ -1968,7 +1968,7 @@ class FlipChaseView(View):
             embed.add_field(name="Initial Bet", value=f"{format_money(self.initial_bet)}", inline=True)
             
             # Update database - user loses everything (already deducted initial bet)
-            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
             
             # Log the loss
             await log_bet_activity(self.user_id, self.initial_bet, "flipchase", "loss")
@@ -1996,7 +1996,7 @@ class FlipChaseView(View):
             self.game_resolved = True
             
             # Get user data
-            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
             
             # Add winnings to balance
             profit = self.current_winnings - self.initial_bet
@@ -2042,7 +2042,7 @@ class FlipChaseView(View):
         except Exception as e:
             # If banking fails, try to refund the user
             try:
-                user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+                user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
                 balance += self.current_winnings
                 c.execute("UPDATE users SET balance=? WHERE user_id=?", (balance, self.user_id))
                 conn.commit()
@@ -2059,7 +2059,7 @@ class FlipChaseView(View):
                 return
             
             # Get user data and refund their INITIAL BET only (not winnings)
-            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
             
             # Only refund the initial bet (player forfeits potential winnings on timeout)
             balance += self.initial_bet
@@ -2101,7 +2101,7 @@ async def flipchase(ctx, amount: str = None):
             await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
             return
 
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
 
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
@@ -2641,7 +2641,7 @@ async def slots(ctx, amount: str = None):
             await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
             return
         
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
@@ -2689,7 +2689,7 @@ async def deposit(ctx, user: discord.Member = None, amount: str = None):
         
         # Update balance
         update_balance(user.id, value)
-        user_id, bal, req, gambled, _, _ = get_user(user.id)
+        user_id, bal, req, gambled, _, _, _ = get_user(user.id)
         remaining = max(req - gambled, 0)
         
         # Log transaction
@@ -2726,7 +2726,7 @@ async def viewamount(ctx, user: discord.Member = None):
         return
     
     try:
-        user_id, bal, req, gambled, _, _ = get_user(user.id)
+        user_id, bal, req, gambled, _, _, _ = get_user(user.id)
         remaining = max(req - gambled, 0)
         await ctx.send(f"💰 **{user.display_name}'s Gambling Amount**\nBalance: `{bal:,}$`\nRequired Gamble: `{req:,}$`\nRemaining: `{remaining:,}$`")
     except Exception as e:
@@ -3820,7 +3820,7 @@ async def luckynumber(ctx, amount: str = None, max_number: str = None):
             return
 
         # Get user data
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
 
         if value > balance:
             await ctx.send("❌ You cannot gamble more than your balance.")
@@ -3920,7 +3920,7 @@ async def pick(ctx, number: str = None):
             return
 
         # Get user data
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         bet_amount = game["bet"]
         lucky_num = game["lucky_num"]
@@ -4254,7 +4254,7 @@ async def crash(ctx, amount: str = None):
             return
         
         # Get user data
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         # Check balance
         if value > balance:
@@ -4350,7 +4350,7 @@ class GladiatorConfirmView(View):
             return
         
         # Check if opponent has enough balance
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.opponent_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.opponent_id)
         
         if balance < self.bet_amount:
             await interaction.response.send_message(
@@ -5009,7 +5009,7 @@ class BlackjackView(View):
             return
         
         # Check if player has enough balance to double
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.game.user_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.game.user_id)
         
         if balance < self.game.bet_amount:
             await interaction.response.send_message("❌ Insufficient balance to double down!", ephemeral=True)
@@ -5065,7 +5065,7 @@ class BlackjackView(View):
     
     async def finish_game(self, interaction: discord.Interaction, result, message):
         """Finish the game and update database"""
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.game.user_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.game.user_id)
         
         if result == "win":
             winnings = self.game.bet_amount * 2
@@ -5121,7 +5121,7 @@ async def blackjack(ctx, amount: str = None):
             await ctx.send("❌ Invalid amount format! Use k, m, or b (e.g., 10m, 5k).")
             return
         
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         if value > balance:
             await ctx.send("❌ You cannot bet more than your balance.")
@@ -5291,7 +5291,7 @@ async def fight(ctx, opponent: discord.Member, amount: str):
             return
         
         # Get challenger's balance
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         if value > balance:
             await ctx.send(f"❌ Insufficient balance! You have {balance:,}$ but need {value:,}$")
@@ -9285,7 +9285,7 @@ class BaccaratView(discord.ui.View):
         """Handle timeout by canceling the game."""
         if self.user_id in active_baccarat_games:
             # Refund the bet
-            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
             update_balance(self.user_id, balance + self.current_bet)
             del active_baccarat_games[self.user_id]
         
@@ -9343,7 +9343,7 @@ class BaccaratView(discord.ui.View):
             return
         
         # Check balance
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
         
         if balance < amount:
             await interaction.response.send_message(f"❌ Insufficient balance! You need {amount:,}$ but only have {balance:,}$", ephemeral=True)
@@ -9386,7 +9386,7 @@ class BaccaratView(discord.ui.View):
         self.bet_on = position
         
         # Get current balance
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
         
         # Update the embed
         embed = discord.Embed(
@@ -9493,7 +9493,7 @@ class BaccaratView(discord.ui.View):
             winner = "tie"
         
         # Calculate payout
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
         
         if self.bet_on == winner:
             if winner == "player":
@@ -9581,7 +9581,7 @@ class BaccaratView(discord.ui.View):
         
         # Refund the bet if any
         if self.current_bet > 0:
-            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(self.user_id)
+            user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
             update_balance(self.user_id, balance + self.current_bet)
         
         # Remove from active games
@@ -9610,7 +9610,7 @@ async def baccarat(ctx):
             return
         
         # Get user data
-        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn = get_user(ctx.author.id)
+        user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(ctx.author.id)
         
         # Create the initial embed
         embed = discord.Embed(
