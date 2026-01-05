@@ -2465,14 +2465,13 @@ class RPSView(discord.ui.View):
                 payout = 0
                 net_profit = 0  # Bet already deducted, so no additional loss
             
-            # Get current balance (after bet was already deducted)
-            user = get_user(self.user_id)
-            current_balance = user[1]
-            new_balance = current_balance + net_profit
-            
             # Update balance for win or tie (but not loss since bet already deducted)
             if result != "loss":
                 update_balance(self.user_id, net_profit)
+            
+            # Get final balance after update
+            user = get_user(self.user_id)
+            new_balance = user[1]
             
             # Create result embed
             result_embed = discord.Embed(
