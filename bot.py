@@ -2449,7 +2449,7 @@ class RPSView(discord.ui.View):
                 result_text = "🤝 It's a Tie!"
                 result_color = discord.Color.yellow()
                 payout = self.bet_amount  # Get bet back
-                net_profit = 0
+                net_profit = self.bet_amount  # Return the bet to player
             elif (player_choice == 0 and self.house_choice == 2) or \
                  (player_choice == 1 and self.house_choice == 0) or \
                  (player_choice == 2 and self.house_choice == 1):
@@ -2470,8 +2470,8 @@ class RPSView(discord.ui.View):
             current_balance = user[1]
             new_balance = current_balance + net_profit
             
-            # Update balance only if there's profit (win or tie)
-            if net_profit != 0:
+            # Update balance for win or tie (but not loss since bet already deducted)
+            if result != "loss":
                 update_balance(self.user_id, net_profit)
             
             # Create result embed
