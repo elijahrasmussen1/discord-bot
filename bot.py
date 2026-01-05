@@ -386,6 +386,21 @@ def update_balance(user_id, amount):
     )
     conn.commit()
 
+def set_balance(user_id, new_balance):
+    """Set user balance to a specific amount. Validates inputs."""
+    try:
+        new_balance = int(new_balance)
+    except (ValueError, TypeError):
+        raise ValueError(f"Invalid balance: {new_balance}")
+    
+    user_id_db, _, _, _, _, _, _ = get_user(user_id)
+    new_req = int(new_balance * GAMBLE_PERCENT)
+    c.execute(
+        "UPDATE users SET balance=?, required_gamble=? WHERE user_id=?",
+        (new_balance, new_req, user_id_db)
+    )
+    conn.commit()
+
 def add_gambled(user_id, amount):
     """Add gambled amount to user's gamble stats. Validates inputs."""
     try:
@@ -2453,7 +2468,7 @@ class RPSView(discord.ui.View):
             # Update balance
             user = get_user(self.user_id)
             new_balance = user[1] + net_profit
-            update_balance(self.user_id, new_balance)
+            set_balance(self.user_id, new_balance)
             
             # Create result embed
             result_embed = discord.Embed(
@@ -2548,7 +2563,7 @@ async def rockpaperscissors(ctx, amount: str = None):
         
         # Deduct bet
         new_balance = user[1] - bet
-        update_balance(ctx.author.id, new_balance)
+        set_balance(ctx.author.id, new_balance)
         
         # Track gambled amount
         add_gambled(ctx.author.id, bet)
@@ -9286,7 +9301,7 @@ class BaccaratView(discord.ui.View):
         if self.user_id in active_baccarat_games:
             # Refund the bet
             user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
-            update_balance(self.user_id, balance + self.current_bet)
+            set_balance(self.user_id, balance + self.current_bet)
             del active_baccarat_games[self.user_id]
         
         # Disable all buttons
@@ -9351,7 +9366,7 @@ class BaccaratView(discord.ui.View):
         
         # Add to current bet
         self.current_bet += amount
-        update_balance(self.user_id, balance - amount)
+        set_balance(self.user_id, balance - amount)
         
         # Update the embed
         new_balance = balance - amount
@@ -9506,12 +9521,12 @@ class BaccaratView(discord.ui.View):
                 payout = self.current_bet * 9  # 8:1
                 profit = self.current_bet * 8
             
-            update_balance(self.user_id, balance + payout)
+            set_balance(self.user_id, balance + payout)
             result_text = f"🎉 **YOU WIN!**\n\nPayout: {payout:,}$\nProfit: +{profit:,}$"
             color = discord.Color.green()
         elif winner == "tie" and self.bet_on != "tie":
             # Tie returns bets to player and banker
-            update_balance(self.user_id, balance + self.current_bet)
+            set_balance(self.user_id, balance + self.current_bet)
             result_text = f"🤝 **TIE - BET RETURNED**\n\nYour {self.current_bet:,}$ bet has been returned."
             color = discord.Color.light_grey()
             profit = 0
@@ -9582,7 +9597,7 @@ class BaccaratView(discord.ui.View):
         # Refund the bet if any
         if self.current_bet > 0:
             user_id, balance, required_gamble, gambled, total_gambled, total_withdrawn, favorite_game = get_user(self.user_id)
-            update_balance(self.user_id, balance + self.current_bet)
+            set_balance(self.user_id, balance + self.current_bet)
         
         # Remove from active games
         if self.user_id in active_baccarat_games:
