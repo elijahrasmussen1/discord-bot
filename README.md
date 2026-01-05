@@ -383,7 +383,7 @@ async def rock_paper_scissors(ctx, amount: str = None, choice: str = None):
         return
 
     bot_choice = random.choice(["rock", "paper", "scissors"])
-    
+
     # Determine winner
     if choice == bot_choice:
         result = "tie"
@@ -407,7 +407,7 @@ async def rock_paper_scissors(ctx, amount: str = None, choice: str = None):
     if result != "tie":
         gambled += value
         total_gambled += value
-    
+
     required_gamble = int(balance * GAMBLE_PERCENT)
 
     c.execute(
