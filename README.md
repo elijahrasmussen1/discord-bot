@@ -5,6 +5,7 @@ from discord.ui import View, Button
 import sqlite3
 import random
 import time
+import asyncio
 from datetime import datetime, timedelta
 
 # -----------------------------
@@ -15,7 +16,7 @@ intents.members = True
 intents.guilds = True
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+bot = commands.Bot(command_prefix=["!", "-"], intents=intents)
 
 # -----------------------------
 # CONFIG
@@ -29,6 +30,17 @@ MIN_DEPOSIT = 10_000_000
 GAMBLE_PERCENT = 0.30
 USERS_PER_PAGE = 5
 GUILD_ID = 1442270020959867162
+
+# Giveaway Configuration
+GIVEAWAY_CHANNEL_ID = 1442336661731147837
+INVITES_CHANNEL_ID = 1442705248274747594
+INVITE_TRACKER_BOT_ID = 720351927581278219
+
+# Role-based giveaway entries
+MEMBER_ROLE_ID = 1442285739067834528  # 1 entry
+LEVEL5_ROLE_ID = 1448410734428950569  # 2 entries
+SHOP_OWNER_ROLE_ID = 1446627385511383162  # 3 entries
+SERVER_BOOSTER_ROLE_ID = 1442698887180714258  # 4 entries, bypass requirements
 
 # -----------------------------
 # DATABASE
@@ -56,6 +68,28 @@ CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
     timestamp INTEGER
+)
+""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS giveaways (
+    giveaway_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER,
+    channel_id INTEGER,
+    prize TEXT,
+    winners_count INTEGER,
+    end_time INTEGER,
+    invite_requirement INTEGER,
+    message_requirement INTEGER,
+    message_period TEXT,
+    active INTEGER DEFAULT 1
+)
+""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS giveaway_entries (
+    giveaway_id INTEGER,
+    user_id INTEGER,
+    entries INTEGER DEFAULT 1,
+    PRIMARY KEY (giveaway_id, user_id)
 )
 """)
 conn.commit()
@@ -116,6 +150,70 @@ def withdraw_balance(user_id, amount):
         (new_bal, new_req, new_total_withdrawn, user_id)
     )
     conn.commit()
+
+def parse_duration(duration_str):
+    """Parse duration string like '10 minutes', '5 hours', '2 days' to seconds"""
+    parts = duration_str.lower().strip().split()
+    if len(parts) != 2:
+        return None
+    try:
+        value = int(parts[0])
+        unit = parts[1]
+        if unit.startswith('minute'):
+            return value * 60
+        elif unit.startswith('hour'):
+            return value * 3600
+        elif unit.startswith('day'):
+            return value * 86400
+        else:
+            return None
+    except ValueError:
+        return None
+
+def get_user_invites(guild, user_id):
+    """Get user invite count by checking Invite Tracker bot"""
+    # Since we can't directly access Invite Tracker's data, we'll track via commands
+    # This is a placeholder that will need to be called manually or via their API
+    # For now, return 0 as default
+    return 0
+
+def get_message_count(user_id, period):
+    """Get message count for a user based on period (today, weekly, monthly)"""
+    now = int(time.time())
+    if period.lower() == 'today':
+        start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    elif period.lower() == 'weekly':
+        start = int((datetime.now() - timedelta(days=datetime.now().weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    elif period.lower() == 'monthly':
+        start = int(datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    else:
+        return 0
+    
+    c.execute("SELECT COUNT(*) FROM messages WHERE user_id=? AND timestamp>=?", (user_id, start))
+    return c.fetchone()[0]
+
+def get_entry_count(member):
+    """Calculate entry count based on user roles"""
+    role_ids = [role.id for role in member.roles]
+    
+    # Server Booster gets 4 entries
+    if SERVER_BOOSTER_ROLE_ID in role_ids:
+        return 4
+    # Shop Owner gets 3 entries
+    elif SHOP_OWNER_ROLE_ID in role_ids:
+        return 3
+    # Level 5 gets 2 entries
+    elif LEVEL5_ROLE_ID in role_ids:
+        return 2
+    # Member gets 1 entry
+    elif MEMBER_ROLE_ID in role_ids:
+        return 1
+    else:
+        return 0
+
+def is_booster(member):
+    """Check if user has booster role (bypasses requirements)"""
+    return any(role.id == SERVER_BOOSTER_ROLE_ID for role in member.roles)
 
 # -----------------------------
 # TICKET VIEWS
@@ -242,6 +340,86 @@ class WithdrawalPanelView(View):
         await interaction.response.send_message(f"✅ Your withdrawal ticket has been created: {channel.mention}", ephemeral=True)
 
 # -----------------------------
+# GIVEAWAY VIEWS
+# -----------------------------
+class GiveawayView(View):
+    def __init__(self, giveaway_id):
+        super().__init__(timeout=None)
+        self.giveaway_id = giveaway_id
+
+    @discord.ui.button(label="🎉 Join Giveaway", style=discord.ButtonStyle.green, custom_id="join_giveaway")
+    async def join_giveaway(self, interaction: discord.Interaction, button: Button):
+        # Get giveaway details
+        c.execute("SELECT * FROM giveaways WHERE giveaway_id=? AND active=1", (self.giveaway_id,))
+        giveaway = c.fetchone()
+        
+        if not giveaway:
+            await interaction.response.send_message("❌ This giveaway is no longer active.", ephemeral=True)
+            return
+        
+        _, _, _, _, _, _, invite_req, message_req, message_period, _ = giveaway
+        
+        member = interaction.user
+        guild = interaction.guild
+        
+        # Check if already entered
+        c.execute("SELECT * FROM giveaway_entries WHERE giveaway_id=? AND user_id=?", 
+                  (self.giveaway_id, member.id))
+        if c.fetchone():
+            await interaction.response.send_message("❌ You have already joined this giveaway!", ephemeral=True)
+            return
+        
+        # Get entry count based on roles
+        entries = get_entry_count(member)
+        
+        if entries == 0:
+            await interaction.response.send_message("❌ You don't have a qualifying role to enter this giveaway!", ephemeral=True)
+            return
+        
+        # Server boosters bypass requirements
+        if is_booster(member):
+            c.execute("INSERT INTO giveaway_entries VALUES (?, ?, ?)", 
+                      (self.giveaway_id, member.id, entries))
+            conn.commit()
+            await interaction.response.send_message(
+                f"✅ You joined the giveaway with **{entries} entries** (Server Booster - Requirements Bypassed)!", 
+                ephemeral=True
+            )
+            return
+        
+        # Check invite requirement
+        user_invites = get_user_invites(guild, member.id)
+        if user_invites < invite_req:
+            await interaction.response.send_message(
+                f"❌ Join failed! You must complete the invite requirement.\n"
+                f"Required: {invite_req} invites | Your invites: {user_invites}\n"
+                f"Use /invites in <#{INVITES_CHANNEL_ID}> to see your invites.",
+                ephemeral=True
+            )
+            return
+        
+        # Check message requirement
+        user_messages = get_message_count(member.id, message_period)
+        if user_messages < message_req:
+            await interaction.response.send_message(
+                f"❌ Join failed! You must complete the message requirement.\n"
+                f"Required: {message_req} messages ({message_period}) | Your messages: {user_messages}\n"
+                f"Spamming messages is a blacklist from the giveaway!",
+                ephemeral=True
+            )
+            return
+        
+        # Both requirements met
+        c.execute("INSERT INTO giveaway_entries VALUES (?, ?, ?)", 
+                  (self.giveaway_id, member.id, entries))
+        conn.commit()
+        
+        await interaction.response.send_message(
+            f"✅ You successfully joined the giveaway with **{entries} entries**!", 
+            ephemeral=True
+        )
+
+# -----------------------------
 # PREFIX COMMANDS
 # -----------------------------
 @bot.command(name="ticketpanel")
@@ -287,7 +465,11 @@ async def assist(ctx):
             "**!viewamount @user** - View a user's balance\n"
             "**!amountall [page]** - View all users balances\n"
             "**!wipeamount @user** - Wipe a user's balance"
-        ))
+        ), inline=False)
+        embed.add_field(name="🎉 Giveaway Commands", value=(
+            "**-gcreate** - Create a new giveaway (interactive)\n"
+            "**-greroll [giveaway_id]** - Reroll giveaway winners"
+        ), inline=False)
     await ctx.send(embed=embed)
 
 @bot.command(name="amount")
@@ -457,6 +639,252 @@ async def messages_count(ctx, user: discord.Member = None):
     embed.timestamp = datetime.utcnow()
     
     await ctx.send(embed=embed)
+
+@bot.command(name="gcreate")
+async def gcreate(ctx):
+    """Interactive giveaway creation command"""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only owners can create giveaways.")
+        return
+    
+    await ctx.send("🎉 **Giveaway Creation Wizard**\nPlease answer the following questions:")
+    
+    def check(m):
+        return m.author == ctx.author and m.channel == ctx.channel
+    
+    try:
+        # Question 1: Duration
+        await ctx.send("**Question 1:** What is the duration of the giveaway?\n*Format: `10 minutes`, `5 hours`, `2 days`*")
+        duration_msg = await bot.wait_for('message', check=check, timeout=60.0)
+        duration_seconds = parse_duration(duration_msg.content)
+        
+        if duration_seconds is None:
+            await ctx.send("❌ Invalid duration format. Giveaway creation cancelled.")
+            return
+        
+        # Question 2: Number of Winners
+        await ctx.send("**Question 2:** How many winners?\n*Format: Enter a number (e.g., `1`, `3`)*")
+        winners_msg = await bot.wait_for('message', check=check, timeout=60.0)
+        
+        try:
+            winners_count = int(winners_msg.content)
+            if winners_count < 1:
+                await ctx.send("❌ Winners count must be at least 1. Giveaway creation cancelled.")
+                return
+        except ValueError:
+            await ctx.send("❌ Invalid number. Giveaway creation cancelled.")
+            return
+        
+        # Question 3: Prize
+        await ctx.send("**Question 3:** What is the prize?")
+        prize_msg = await bot.wait_for('message', check=check, timeout=120.0)
+        prize = prize_msg.content
+        
+        # Question 4: Invite Requirement
+        await ctx.send("**Giveaway Requirements:**\n**Question 4:** Minimum invites required?\n*Format: Enter a number (e.g., `2`)*")
+        invite_msg = await bot.wait_for('message', check=check, timeout=60.0)
+        
+        try:
+            invite_req = int(invite_msg.content)
+        except ValueError:
+            await ctx.send("❌ Invalid number. Giveaway creation cancelled.")
+            return
+        
+        # Question 5: Message Requirement
+        await ctx.send("**Question 5:** Minimum messages required and period?\n*Format: `250 Today`, `100 Weekly`, `500 Monthly`*")
+        message_msg = await bot.wait_for('message', check=check, timeout=60.0)
+        
+        msg_parts = message_msg.content.split()
+        if len(msg_parts) != 2:
+            await ctx.send("❌ Invalid format. Giveaway creation cancelled.")
+            return
+        
+        try:
+            message_req = int(msg_parts[0])
+            message_period = msg_parts[1].lower()
+            
+            if message_period not in ['today', 'weekly', 'monthly']:
+                await ctx.send("❌ Period must be 'Today', 'Weekly', or 'Monthly'. Giveaway creation cancelled.")
+                return
+        except ValueError:
+            await ctx.send("❌ Invalid number. Giveaway creation cancelled.")
+            return
+        
+        # Create giveaway
+        end_time = int(time.time()) + duration_seconds
+        
+        # Create giveaway embed
+        embed = discord.Embed(
+            title="🎉 GIVEAWAY 🎉",
+            description=f"**Prize:** {prize}\n\n"
+                       f"**Winners:** {winners_count}\n"
+                       f"**Ends:** <t:{end_time}:R>\n\n"
+                       f"**Requirements:**\n"
+                       f"📨 Invites: {invite_req}\n"
+                       f"💬 Messages: {message_req} ({message_period.title()})\n\n"
+                       f"**Role Entries:**\n"
+                       f"<@&{MEMBER_ROLE_ID}>: 1 entry\n"
+                       f"<@&{LEVEL5_ROLE_ID}>: 2 entries\n"
+                       f"<@&{SHOP_OWNER_ROLE_ID}>: 3 entries\n"
+                       f"<@&{SERVER_BOOSTER_ROLE_ID}>: 4 entries (bypass requirements)",
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text="Click the button below to join!")
+        
+        # Send to giveaway channel
+        giveaway_channel = bot.get_channel(GIVEAWAY_CHANNEL_ID)
+        if not giveaway_channel:
+            await ctx.send("❌ Giveaway channel not found!")
+            return
+        
+        # Insert into database first to get giveaway_id
+        c.execute("""
+            INSERT INTO giveaways (message_id, channel_id, prize, winners_count, end_time, 
+                                   invite_requirement, message_requirement, message_period, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+        """, (0, GIVEAWAY_CHANNEL_ID, prize, winners_count, end_time, invite_req, message_req, message_period))
+        conn.commit()
+        giveaway_id = c.lastrowid
+        
+        # Send giveaway message with button
+        giveaway_msg = await giveaway_channel.send(embed=embed, view=GiveawayView(giveaway_id))
+        
+        # Update with message_id
+        c.execute("UPDATE giveaways SET message_id=? WHERE giveaway_id=?", (giveaway_msg.id, giveaway_id))
+        conn.commit()
+        
+        await ctx.send(f"✅ Giveaway created! ID: `{giveaway_id}` | Jump: {giveaway_msg.jump_url}")
+        
+        # Schedule giveaway end
+        asyncio.create_task(end_giveaway(giveaway_id, duration_seconds))
+        
+    except asyncio.TimeoutError:
+        await ctx.send("❌ Giveaway creation timed out. Please try again.")
+
+async def end_giveaway(giveaway_id, delay):
+    """End a giveaway after the specified delay"""
+    await asyncio.sleep(delay)
+    
+    # Get giveaway details
+    c.execute("SELECT * FROM giveaways WHERE giveaway_id=? AND active=1", (giveaway_id,))
+    giveaway = c.fetchone()
+    
+    if not giveaway:
+        return
+    
+    giveaway_id, message_id, channel_id, prize, winners_count, end_time, invite_req, message_req, message_period, _ = giveaway
+    
+    # Get all entries
+    c.execute("SELECT user_id, entries FROM giveaway_entries WHERE giveaway_id=?", (giveaway_id,))
+    entries = c.fetchall()
+    
+    if not entries:
+        # No entries, announce no winners
+        channel = bot.get_channel(channel_id)
+        if channel:
+            try:
+                message = await channel.fetch_message(message_id)
+                await message.reply("❌ No one entered the giveaway. No winners selected.")
+            except:
+                pass
+        
+        c.execute("UPDATE giveaways SET active=0 WHERE giveaway_id=?", (giveaway_id,))
+        conn.commit()
+        return
+    
+    # Create weighted list of user IDs based on entries
+    weighted_entries = []
+    for user_id, entry_count in entries:
+        weighted_entries.extend([user_id] * entry_count)
+    
+    # Pick winners
+    winners = []
+    available_entries = weighted_entries.copy()
+    
+    for _ in range(min(winners_count, len(entries))):
+        if not available_entries:
+            break
+        winner_id = random.choice(available_entries)
+        winners.append(winner_id)
+        # Remove all entries of this winner to avoid duplicate winners
+        available_entries = [uid for uid in available_entries if uid != winner_id]
+    
+    # Announce winners
+    channel = bot.get_channel(channel_id)
+    if channel:
+        try:
+            message = await channel.fetch_message(message_id)
+            winner_mentions = " ".join([f"<@{uid}>" for uid in winners])
+            
+            embed = discord.Embed(
+                title="🎉 GIVEAWAY ENDED 🎉",
+                description=f"**Prize:** {prize}\n\n**Winners:**\n{winner_mentions}",
+                color=discord.Color.green()
+            )
+            
+            await message.edit(embed=embed, view=None)
+            await message.reply(f"🎊 Congratulations {winner_mentions}! You won **{prize}**!")
+        except Exception as e:
+            print(f"Error ending giveaway: {e}")
+    
+    # Mark giveaway as inactive
+    c.execute("UPDATE giveaways SET active=0 WHERE giveaway_id=?", (giveaway_id,))
+    conn.commit()
+
+@bot.command(name="greroll")
+async def greroll(ctx, giveaway_id: int):
+    """Reroll a giveaway to select new winners"""
+    if not is_owner(ctx.author):
+        await ctx.send("❌ Only owners can reroll giveaways.")
+        return
+    
+    # Get giveaway details
+    c.execute("SELECT * FROM giveaways WHERE giveaway_id=?", (giveaway_id,))
+    giveaway = c.fetchone()
+    
+    if not giveaway:
+        await ctx.send(f"❌ Giveaway with ID `{giveaway_id}` not found.")
+        return
+    
+    _, message_id, channel_id, prize, winners_count, end_time, invite_req, message_req, message_period, active = giveaway
+    
+    # Get all entries
+    c.execute("SELECT user_id, entries FROM giveaway_entries WHERE giveaway_id=?", (giveaway_id,))
+    entries = c.fetchall()
+    
+    if not entries:
+        await ctx.send(f"❌ No entries found for giveaway ID `{giveaway_id}`.")
+        return
+    
+    # Create weighted list
+    weighted_entries = []
+    for user_id, entry_count in entries:
+        weighted_entries.extend([user_id] * entry_count)
+    
+    # Pick new winners
+    winners = []
+    available_entries = weighted_entries.copy()
+    
+    for _ in range(min(winners_count, len(entries))):
+        if not available_entries:
+            break
+        winner_id = random.choice(available_entries)
+        winners.append(winner_id)
+        available_entries = [uid for uid in available_entries if uid != winner_id]
+    
+    # Announce new winners
+    channel = bot.get_channel(channel_id)
+    if channel:
+        try:
+            message = await channel.fetch_message(message_id)
+            winner_mentions = " ".join([f"<@{uid}>" for uid in winners])
+            
+            await message.reply(f"🔄 **Giveaway Rerolled!**\n🎊 New Winners: {winner_mentions}!\nPrize: **{prize}**")
+            await ctx.send(f"✅ Giveaway rerolled! New winners: {winner_mentions}")
+        except Exception as e:
+            await ctx.send(f"❌ Error rerolling giveaway: {e}")
+    else:
+        await ctx.send(f"❌ Giveaway channel not found.")
 
 # -----------------------------
 # BOT READY
