@@ -4,6 +4,8 @@ from discord.ext import commands
 from discord.ui import View, Button
 import sqlite3
 import random
+import time
+from datetime import datetime, timedelta
 
 # -----------------------------
 # INTENTS
@@ -47,6 +49,13 @@ c.execute("""
 CREATE TABLE IF NOT EXISTS tickets (
     user_id INTEGER,
     ticket_number INTEGER
+)
+""")
+c.execute("""
+CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    timestamp INTEGER
 )
 """)
 conn.commit()
@@ -267,8 +276,9 @@ async def assist(ctx):
     embed.add_field(name="👤 Member Commands", value=(
         "**!amount** - View your balance and remaining required gamble\n"
         "**!withdraw** - Open a withdrawal ticket (if 30% gambled)\n"
-        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip"
-    ))
+        "**!coinflip [amount] [heads/tails]** - Gamble a coinflip\n"
+        "**!m [@user]** - View message count statistics (defaults to yourself)"
+    ), inline=False)
     if is_owner(ctx.author):
         embed.add_field(name="🔐 Owner Commands", value=(
             "**!ticketpanel** - Send deposit ticket panel\n"
@@ -407,12 +417,69 @@ async def wipeamount(ctx, user: discord.Member):
     conn.commit()
     await ctx.send(f"✅ {user.mention}'s balance wiped.")
 
+@bot.command(name="m")
+async def messages_count(ctx, user: discord.Member = None):
+    if user is None:
+        user = ctx.author
+    
+    # Get current timestamp and calculate time boundaries
+    now = int(time.time())
+    today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    week_start = int((datetime.now() - timedelta(days=datetime.now().weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    month_start = int(datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
+    
+    # Query message counts
+    c.execute("SELECT COUNT(*) FROM messages WHERE user_id=? AND timestamp>=?", (user.id, today_start))
+    today_count = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM messages WHERE user_id=? AND timestamp>=?", (user.id, week_start))
+    week_count = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM messages WHERE user_id=? AND timestamp>=?", (user.id, month_start))
+    month_count = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM messages WHERE user_id=?", (user.id,))
+    all_time_count = c.fetchone()[0]
+    
+    # Create professional embed
+    embed = discord.Embed(
+        title=f"📊 Message Statistics for {user.display_name}",
+        description=f"Tracking message activity for giveaway eligibility",
+        color=discord.Color.blue()
+    )
+    
+    embed.add_field(name="📅 Today", value=f"`{today_count:,}` messages", inline=True)
+    embed.add_field(name="📆 This Week", value=f"`{week_count:,}` messages", inline=True)
+    embed.add_field(name="🗓️ This Month", value=f"`{month_count:,}` messages", inline=True)
+    embed.add_field(name="🌐 All Time", value=f"`{all_time_count:,}` messages", inline=True)
+    
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.set_footer(text=f"User ID: {user.id}")
+    embed.timestamp = datetime.utcnow()
+    
+    await ctx.send(embed=embed)
+
 # -----------------------------
 # BOT READY
 # -----------------------------
 @bot.event
 async def on_ready():
     print(f"✅ Logged in as {bot.user}")
+
+@bot.event
+async def on_message(message):
+    # Ignore bot messages
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+    
+    # Track message in database
+    timestamp = int(time.time())
+    c.execute("INSERT INTO messages (user_id, timestamp) VALUES (?, ?)", (message.author.id, timestamp))
+    conn.commit()
+    
+    # Process commands
+    await bot.process_commands(message)
 
 # -----------------------------
 # RUN BOT
