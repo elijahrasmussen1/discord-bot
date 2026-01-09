@@ -422,8 +422,7 @@ async def messages_count(ctx, user: discord.Member = None):
     if user is None:
         user = ctx.author
     
-    # Get current timestamp and calculate time boundaries
-    now = int(time.time())
+    # Calculate time boundaries
     today_start = int(datetime.now().replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     week_start = int((datetime.now() - timedelta(days=datetime.now().weekday())).replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     month_start = int(datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).timestamp())
@@ -444,7 +443,7 @@ async def messages_count(ctx, user: discord.Member = None):
     # Create professional embed
     embed = discord.Embed(
         title=f"📊 Message Statistics for {user.display_name}",
-        description=f"Tracking message activity for giveaway eligibility",
+        description="Tracking message activity for giveaway eligibility",
         color=discord.Color.blue()
     )
     
