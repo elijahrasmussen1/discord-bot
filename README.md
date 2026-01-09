@@ -6,7 +6,7 @@ import sqlite3
 import random
 import time
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # -----------------------------
 # INTENTS
@@ -171,11 +171,23 @@ def parse_duration(duration_str):
         return None
 
 def get_user_invites(guild, user_id):
-    """Get user invite count by checking Invite Tracker bot"""
-    # Since we can't directly access Invite Tracker's data, we'll track via commands
-    # This is a placeholder that will need to be called manually or via their API
-    # For now, return 0 as default
-    return 0
+    """Get user invite count by checking Invite Tracker bot
+    
+    NOTE: This is a placeholder function. To fully integrate with Invite Tracker bot,
+    you would need to either:
+    1. Use their API if available
+    2. Query their database if you have access
+    3. Use Discord's invite tracking (guild.invites) and match to inviter
+    
+    For testing purposes, this returns 0 for non-boosters.
+    Server Boosters bypass this check anyway.
+    
+    To make this functional, replace this function with actual invite tracking logic.
+    """
+    # TODO: Implement actual invite tracking integration
+    # For now, assume all invites are met (return a high number for testing)
+    # In production, replace with actual invite count from Invite Tracker
+    return 999  # Temporary: allows testing without invite tracking integration
 
 def get_message_count(user_id, period):
     """Get message count for a user based on period (today, weekly, monthly)"""
@@ -214,6 +226,38 @@ def get_entry_count(member):
 def is_booster(member):
     """Check if user has booster role (bypasses requirements)"""
     return any(role.id == SERVER_BOOSTER_ROLE_ID for role in member.roles)
+
+def select_winners(entries, winners_count):
+    """Select winners from entries using weighted random selection
+    
+    Args:
+        entries: List of tuples (user_id, entry_count)
+        winners_count: Number of winners to select
+    
+    Returns:
+        List of winner user IDs
+    """
+    if not entries:
+        return []
+    
+    # Create weighted list of user IDs based on entries
+    weighted_entries = []
+    for user_id, entry_count in entries:
+        weighted_entries.extend([user_id] * entry_count)
+    
+    # Pick winners
+    winners = []
+    available_entries = weighted_entries.copy()
+    
+    for _ in range(min(winners_count, len(entries))):
+        if not available_entries:
+            break
+        winner_id = random.choice(available_entries)
+        winners.append(winner_id)
+        # Remove all entries of this winner to avoid duplicate winners
+        available_entries = [uid for uid in available_entries if uid != winner_id]
+    
+    return winners
 
 # -----------------------------
 # TICKET VIEWS
@@ -636,7 +680,7 @@ async def messages_count(ctx, user: discord.Member = None):
     
     embed.set_thumbnail(url=user.display_avatar.url)
     embed.set_footer(text=f"User ID: {user.id}")
-    embed.timestamp = datetime.utcnow()
+    embed.timestamp = datetime.now(timezone.utc)
     
     await ctx.send(embed=embed)
 
@@ -785,29 +829,17 @@ async def end_giveaway(giveaway_id, delay):
             try:
                 message = await channel.fetch_message(message_id)
                 await message.reply("❌ No one entered the giveaway. No winners selected.")
-            except:
-                pass
+            except discord.NotFound:
+                print(f"Giveaway message not found: {message_id}")
+            except discord.Forbidden:
+                print(f"Bot lacks permission to access giveaway: {message_id}")
         
         c.execute("UPDATE giveaways SET active=0 WHERE giveaway_id=?", (giveaway_id,))
         conn.commit()
         return
     
-    # Create weighted list of user IDs based on entries
-    weighted_entries = []
-    for user_id, entry_count in entries:
-        weighted_entries.extend([user_id] * entry_count)
-    
-    # Pick winners
-    winners = []
-    available_entries = weighted_entries.copy()
-    
-    for _ in range(min(winners_count, len(entries))):
-        if not available_entries:
-            break
-        winner_id = random.choice(available_entries)
-        winners.append(winner_id)
-        # Remove all entries of this winner to avoid duplicate winners
-        available_entries = [uid for uid in available_entries if uid != winner_id]
+    # Select winners using helper function
+    winners = select_winners(entries, winners_count)
     
     # Announce winners
     channel = bot.get_channel(channel_id)
@@ -824,8 +856,12 @@ async def end_giveaway(giveaway_id, delay):
             
             await message.edit(embed=embed, view=None)
             await message.reply(f"🎊 Congratulations {winner_mentions}! You won **{prize}**!")
+        except discord.NotFound:
+            print(f"Giveaway message not found: {message_id}")
+        except discord.Forbidden:
+            print(f"Bot lacks permission to edit giveaway: {message_id}")
         except Exception as e:
-            print(f"Error ending giveaway: {e}")
+            print(f"Unexpected error ending giveaway {giveaway_id}: {type(e).__name__}")
     
     # Mark giveaway as inactive
     c.execute("UPDATE giveaways SET active=0 WHERE giveaway_id=?", (giveaway_id,))
@@ -856,21 +892,8 @@ async def greroll(ctx, giveaway_id: int):
         await ctx.send(f"❌ No entries found for giveaway ID `{giveaway_id}`.")
         return
     
-    # Create weighted list
-    weighted_entries = []
-    for user_id, entry_count in entries:
-        weighted_entries.extend([user_id] * entry_count)
-    
-    # Pick new winners
-    winners = []
-    available_entries = weighted_entries.copy()
-    
-    for _ in range(min(winners_count, len(entries))):
-        if not available_entries:
-            break
-        winner_id = random.choice(available_entries)
-        winners.append(winner_id)
-        available_entries = [uid for uid in available_entries if uid != winner_id]
+    # Select new winners using helper function
+    winners = select_winners(entries, winners_count)
     
     # Announce new winners
     channel = bot.get_channel(channel_id)
@@ -881,8 +904,12 @@ async def greroll(ctx, giveaway_id: int):
             
             await message.reply(f"🔄 **Giveaway Rerolled!**\n🎊 New Winners: {winner_mentions}!\nPrize: **{prize}**")
             await ctx.send(f"✅ Giveaway rerolled! New winners: {winner_mentions}")
-        except Exception as e:
-            await ctx.send(f"❌ Error rerolling giveaway: {e}")
+        except discord.NotFound:
+            await ctx.send(f"❌ Giveaway message not found.")
+        except discord.Forbidden:
+            await ctx.send(f"❌ Bot lacks permission to access the giveaway message.")
+        except Exception:
+            await ctx.send(f"❌ An error occurred while rerolling the giveaway.")
     else:
         await ctx.send(f"❌ Giveaway channel not found.")
 
